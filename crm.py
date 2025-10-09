@@ -129,8 +129,7 @@ def init_db():
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         );
-        """,
-        CALL_STATUSES,
+        """
     )
 
     # پیگیری‌ها (وظایف بعدی)
@@ -146,8 +145,7 @@ def init_db():
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         );
-        """,
-        TASK_STATUSES,
+        """
     )
 
     # کاربران ورود به برنامه (app users)
@@ -528,7 +526,7 @@ def page_calls():
         now_hm = datetime.now().time().replace(second=0, microsecond=0)
         d = st.date_input("تاریخ تماس *", today)
         t = st.time_input("زمان تماس *", now_hm)
-        status = st.selectbox("وضعیت تماس *", CALL_STATUSES)
+        status = st.selectbox("وضعیت تماس *")
         desc = st.text_area("توضیحات")
         submitted = st.form_submit_button("ثبت تماس")
         if submitted:
@@ -542,7 +540,7 @@ def page_calls():
     with c1:
         name_q = st.text_input("جستجو در نام کاربر/نام شرکت")
     with c2:
-        st_statuses = st.multiselect("فیلتر وضعیت", CALL_STATUSES, default=[])
+        st_statuses = st.multiselect("فیلتر وضعیت" default=[])
     with c3:
         start_date = st.date_input("از تاریخ", value=None)
     with c4:
@@ -581,7 +579,7 @@ def page_followups():
         title = st.text_input("عنوان اقدام بعدی *", placeholder="مثلاً: ارسال پیش‌فاکتور")
         details = st.text_area("جزئیات")
         due = st.date_input("تاریخ پیگیری *", value=date.today() + timedelta(days=1))
-        status = st.selectbox("وضعیت", TASK_STATUSES, index=0)
+        status = st.selectbox("وضعیت" index=0)
         submitted = st.form_submit_button("ثبت پیگیری")
         if submitted:
             if not title.strip():
@@ -596,7 +594,7 @@ def page_followups():
     with c1:
         name_q = st.text_input("جستجو در نام کاربر/نام شرکت", key="fu_q")
     with c2:
-        st_statuses = st.multiselect("فیلتر وضعیت", TASK_STATUSES, default=[], key="fu_st")
+        st_statuses = st.multiselect("فیلتر وضعیت" default=[], key="fu_st")
     with c3:
         start_date = st.date_input("از تاریخ", value=None, key="fu_sd")
     with c4:
