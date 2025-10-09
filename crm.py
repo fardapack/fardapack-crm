@@ -29,29 +29,52 @@ from typing import List, Tuple, Optional, Dict
 import pandas as pd
 import streamlit as st
 import hashlib
-# ---- UI setup (RTL + tables) ----
+# ---------- صفحه و استایل کلی ----------
 st.set_page_config(page_title="FardaPack Mini-CRM", page_icon="📇", layout="wide")
 
+# استایل راست‌چین برای کل برنامه و جدول‌ها
 st.markdown(
     """
     <style>
-    /* کل اپ RTL */
-    html, body, [data-testid="stAppViewContainer"] { direction: rtl; text-align: right; }
+    /* راست‌چین کردن کل اپ */
+    html, body, [data-testid="stAppViewContainer"] {
+        direction: rtl;
+        text-align: right !important;
+        font-family: "Vazirmatn", sans-serif;
+    }
 
-    /* st.dataframe (گرید) راست‌چین */
-    div[data-testid="stDataFrame"] div[role="grid"] { direction: rtl; }
-    div[data-testid="stDataFrame"] [role="columnheader"],
-    div[data-testid="stDataFrame"] [role="gridcell"] { text-align: right !important; }
+    /* جدول‌های استریم‌لیت (st.dataframe) */
+    [data-testid="stDataFrame"] div[role="gridcell"],
+    [data-testid="stDataFrame"] div[role="columnheader"] {
+        text-align: right !important;
+        direction: rtl !important;
+        justify-content: flex-end !important;
+    }
 
-    /* st.table راست‌چین */
-    [data-testid="stTable"] table { direction: rtl; }
-    [data-testid="stTable"] th, [data-testid="stTable"] td { text-align: right !important; }
+    /* جدول‌های ساده (st.table) */
+    [data-testid="stTable"] table {
+        direction: rtl;
+        width: 100%;
+    }
+    [data-testid="stTable"] th, [data-testid="stTable"] td {
+        text-align: right !important;
+        direction: rtl;
+    }
 
-    /* لیبل‌های ورودی‌ها کمی پررنگ‌تر */
-    .stSelectbox label, .stTextInput label, .stTextArea label, .stDateInput label, .stTimeInput label { font-weight: 600; }
+    /* تنظیم فاصله‌ی جدول از کناره‌ها */
+    [data-testid="stDataFrame"] {
+        margin-right: 10px;
+    }
+
+    /* عنوان‌ها و برچسب‌ها */
+    .stSelectbox label, .stTextInput label, .stTextArea label, .stTimeInput label {
+        font-weight: 600;
+    }
     </style>
     """,
     unsafe_allow_html=True
+)
+
 )
 # تاریخ شمسی
 try:
