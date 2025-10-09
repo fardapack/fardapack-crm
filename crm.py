@@ -540,7 +540,7 @@ def page_calls():
     with c1:
         name_q = st.text_input("جستجو در نام کاربر/نام شرکت")
     with c2:
-        st_statuses = st.multiselect("فیلتر وضعیت" default=[])
+      st_statuses = st.multiselect("فیلتر وضعیت", default=[])
     with c3:
         start_date = st.date_input("از تاریخ", value=None)
     with c4:
