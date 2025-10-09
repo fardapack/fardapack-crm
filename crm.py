@@ -59,33 +59,57 @@ def jalali_str_to_date(s: str) -> Optional[date]:
     except Exception:
         return None
 
+# 🔧 ایمن‌سازی شد
 def date_to_jalali_str(d: date) -> str:
+    """تبدیل میلادی به شمسی به‌صورت امن؛ در خطا یا نبود پکیج مقدار خالی برمی‌گرداند."""
     if not d or not _jalali_supported():
         return ""
-    return JalaliDate.fromgregorian(date=d).strftime("%Y/%m/%d")
+    try:
+        return JalaliDate.fromgregorian(date=d).strftime("%Y/%m/%d")
+    except Exception:
+        return ""
 
-# ========= تنظیمات تعطیلات (برای 10#) =========
-# جمعه تعطیل است؛ علاوه بر آن این فهرست شمسی (YYYY/MM/DD) را می‌توانید تکمیل کنید:
+# ========= پاپ‌آپ تقویم شمسی (streamlit-jalali-date) =========
+from streamlit_jalali_date import date_picker
+
+def jalali_date_input(label: str, key: str, default_jalali: Optional[str] = None) -> Optional[date]:
+    """
+    ورودی تاریخ شمسی با پاپ‌آپ؛ خروجی تاریخ میلادی (datetime.date) یا None.
+    """
+    default_j = default_jalali or (today_jalali_str() if _jalali_supported() else "")
+    selected_j = date_picker(label, default=default_j, key=key)
+    if not selected_j:
+        return None
+    return jalali_str_to_date(str(selected_j))
+
+# ========= تنظیمات تعطیلات =========
 HOLIDAYS_JALALI = {
     # نمونه‌ها:
     # "1403/01/01", "1403/01/12", "1403/03/14",
 }
+
+# 🔧 ایمن‌سازی شد
 def is_holiday_gregorian(d: date) -> bool:
-    # جمعه
-    if d.weekday() == 4:  # Monday=0 .. Friday=4
-        return True
-    # تعطیلات خاص
-    if _jalali_supported():
-        js = date_to_jalali_str(d)
-        if js and js in HOLIDAYS_JALALI:
+    """جمعه یا تاریخ‌های تعطیل تعریف‌شده؛ کاملاً امن حتی اگر persiantools نباشد."""
+    try:
+        if d.weekday() == 4:  # Monday=0 .. Friday=4
             return True
+    except Exception:
+        pass
+    try:
+        if _jalali_supported():
+            js = date_to_jalali_str(d)
+            if js and js in HOLIDAYS_JALALI:
+                return True
+    except Exception:
+        pass
     return False
 
 # ========= پایگاه داده =========
 DB_PATH = "crm.db"
 CALL_STATUSES = ["ناموفق", "موفق", "خاموش", "رد تماس"]
 TASK_STATUSES = ["در حال انجام", "پایان یافته"]
-USER_STATUSES = ["بدون وضعیت", "در حال پیگیری", "پیش فاکتور", "مشتری شد"]  # 5#
+USER_STATUSES = ["بدون وضعیت", "در حال پیگیری", "پیش فاکتور", "مشتری شد"]
 
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10)
@@ -369,13 +393,6 @@ def df_followups_filtered(name_query: str, statuses: List[str], start: Optional[
 def df_users_advanced(name_q: str, created_from: Optional[date], created_to: Optional[date],
                       has_open_task: Optional[bool], last_call_from: Optional[date], last_call_to: Optional[date],
                       only_creator: Optional[int]) -> pd.DataFrame:
-    """
-    فهرست کاربران با فیلترهای:
-    - نام (like)
-    - بازه تاریخ ایجاد
-    - آیا پیگیری باز دارد
-    - بازه تاریخ آخرین تماس
-    """
     conn = get_conn()
     params, where = [], []
     if name_q:
@@ -406,11 +423,8 @@ def df_users_advanced(name_q: str, created_from: Optional[date], created_to: Opt
     """
     df = pd.read_sql_query(base, conn, params=params)
 
-    # فیلتر «آیا پیگیری باز دارد»
     if has_open_task is not None:
         df = df[df["پیگیری_باز_دارد"] == (1 if has_open_task else 0)]
-
-    # فیلتر بازه‌ی آخرین تماس
     if last_call_from:
         df = df[(df["آخرین_تماس"].notna()) & (pd.to_datetime(df["آخرین_تماس"]).dt.date >= last_call_from)]
     if last_call_to:
@@ -458,7 +472,7 @@ def login_view():
                 st.error("نام کاربری یا رمز صحیح نیست.")
 
 def role_label(r: str) -> str:
-    return "مدیر" if r=="admin" else "کارشناس فروش"  # 6#
+    return "مدیر" if r=="admin" else "کارشناس فروش"
 
 def header_userbox():
     a = st.session_state.auth
@@ -466,18 +480,15 @@ def header_userbox():
     st.markdown(f"**کاربر:** {a['username']} — **نقش:** {role_label(a['role'])}")
     st.button("خروج", on_click=lambda: st.session_state.update({"auth": None}))
 
-# ---------- داشبورد (7،8) ----------
+# ---------- داشبورد ----------
 def page_dashboard():
     st.subheader("داشبورد ساده")
     conn = get_conn()
-    # تماس‌های امروز
     calls_today = conn.execute("SELECT COUNT(*) FROM calls WHERE date(call_datetime)=date('now');").fetchone()[0]
-    # کاربران اضافه‌شده امروز
     users_today = conn.execute("SELECT COUNT(*) FROM users WHERE date(created_at)=date('now');").fetchone()[0]
     total_companies = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
     total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     conn.close()
-
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("تماس‌های امروز", calls_today)
     c2.metric("کاربرانِ امروز", users_today)
@@ -488,7 +499,7 @@ def page_dashboard():
 # ---------- شرکت‌ها ----------
 def page_companies():
     a = st.session_state.auth
-    only_creator = None if a["role"]=="admin" else a["id"]  # 7#
+    only_creator = None if a["role"]=="admin" else a["id"]
     st.subheader("ثبت و مدیریت شرکت‌ها")
     with st.expander("➕ افزودن شرکت", expanded=False):
         with st.form("company_form", clear_on_submit=True):
@@ -508,7 +519,7 @@ def page_companies():
     else:
         st.info("شرکتی ثبت نشده است.")
 
-# ---------- کاربران (با فیلترهای 3#) ----------
+# ---------- کاربران ----------
 def page_users():
     a = st.session_state.auth
     only_creator = None if a["role"]=="admin" else a["id"]
@@ -524,7 +535,7 @@ def page_users():
             phone = st.text_input("تلفن")
             role = st.text_input("سمت/نقش")
             company_name = st.selectbox("شرکت", list(company_options.keys()))
-            user_status = st.selectbox("وضعیت کاربر", USER_STATUSES, index=0)  # 5#
+            user_status = st.selectbox("وضعیت کاربر", USER_STATUSES, index=0)
             note = st.text_area("یادداشت")
             if st.form_submit_button("ثبت کاربر"):
                 if not full_name.strip(): st.warning("نام کاربر اجباری است.")
@@ -532,30 +543,25 @@ def page_users():
                     create_user(full_name, phone, role, company_options[company_name], note, user_status, current_user_id())
                     st.success(f"کاربر «{full_name}» ثبت شد.")
 
-    # فیلترها (3#)
+    # فیلترها — پاپ‌آپ شمسی
     st.markdown("### فیلتر کاربران")
     f1, f2, f3, f4, f5 = st.columns([2,2,2,2,2])
     with f1: name_q = st.text_input("نام")
-    with f2: created_from_j = st.text_input("از تاریخ ایجاد (شمسی)")
-    with f3: created_to_j   = st.text_input("تا تاریخ ایجاد (شمسی)")
+    with f2: created_from = jalali_date_input("از تاریخ ایجاد (شمسی)", key="users_created_from", default_jalali=None)
+    with f3: created_to   = jalali_date_input("تا تاریخ ایجاد (شمسی)", key="users_created_to", default_jalali=None)
     with f4:
         opt = st.selectbox("پیگیری باز دارد؟", ["— مهم نیست —", "بله", "خیر"], index=0)
         has_open = None if opt=="— مهم نیست —" else (True if opt=="بله" else False)
     with f5: pass
     g1, g2 = st.columns([2,2])
-    with g1: last_call_from_j = st.text_input("از تاریخ آخرین تماس (شمسی)")
-    with g2: last_call_to_j   = st.text_input("تا تاریخ آخرین تماس (شمسی)")
-
-    created_from = jalali_str_to_date(created_from_j) if created_from_j else None
-    created_to   = jalali_str_to_date(created_to_j)   if created_to_j   else None
-    last_call_from = jalali_str_to_date(last_call_from_j) if last_call_from_j else None
-    last_call_to   = jalali_str_to_date(last_call_to_j)   if last_call_to_j   else None
+    with g1: last_call_from = jalali_date_input("از تاریخ آخرین تماس (شمسی)", key="users_last_call_from", default_jalali=None)
+    with g2: last_call_to   = jalali_date_input("تا تاریخ آخرین تماس (شمسی)", key="users_last_call_to", default_jalali=None)
 
     df = df_users_advanced(name_q, created_from, created_to, has_open,
                            last_call_from, last_call_to, only_creator)
     render_df(df)
 
-    # پروفایل کاربر (4#)
+    # پروفایل کاربر
     st.markdown("### پروفایل کاربر")
     user_map = list_users_basic(only_creator)
     if user_map:
@@ -570,7 +576,6 @@ def page_calls():
     a = st.session_state.auth
     only_creator = None if a["role"]=="admin" else a["id"]
     st.subheader("ثبت تماس‌ها")
-    # کاربرانی که این نقش اجازه دارد
     users = list_users_basic(only_creator)
     user_map = {f"{u[1]} (ID {u[0]})": u[0] for u in users}
     if not user_map:
@@ -579,15 +584,15 @@ def page_calls():
     with st.expander("➕ افزودن تماس", expanded=False):
         with st.form("call_form", clear_on_submit=True):
             user_label = st.selectbox("کاربر *", list(user_map.keys()))
-            j_date = st.text_input("تاریخ تماس (شمسی YYYY/MM/DD) *", value=today_jalali_str(), placeholder="مثلاً 1403/07/18")
+            g_date = jalali_date_input("تاریخ تماس (شمسی)", key="call_date", default_jalali=today_jalali_str())
             t = st.time_input("زمان تماس *", datetime.now().time().replace(second=0, microsecond=0))
             status = st.selectbox("وضعیت تماس *", CALL_STATUSES)
             desc = st.text_area("توضیحات")
             if st.form_submit_button("ثبت تماس"):
-                d = jalali_str_to_date(j_date)
-                if not d: st.warning("فرمت تاریخ صحیح نیست.")
+                if not g_date:
+                    st.warning("لطفاً تاریخ تماس را انتخاب کنید.")
                 else:
-                    call_dt = datetime.combine(d, t)
+                    call_dt = datetime.combine(g_date, t)
                     create_call(user_map[user_label], call_dt, status, desc, current_user_id())
                     st.success("تماس ثبت شد.")
 
@@ -595,15 +600,13 @@ def page_calls():
     c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
     with c1: name_q = st.text_input("جستجو در نام کاربر/نام شرکت")
     with c2: st_statuses = st.multiselect("فیلتر وضعیت", CALL_STATUSES, default=[])
-    with c3: start_j = st.text_input("از تاریخ (شمسی)")
-    with c4: end_j = st.text_input("تا تاریخ (شمسی)")
-    start_date = jalali_str_to_date(start_j) if start_j else None
-    end_date   = jalali_str_to_date(end_j) if end_j else None
+    with c3: start_date = jalali_date_input("از تاریخ (شمسی)", key="calls_filter_start", default_jalali=None)
+    with c4: end_date   = jalali_date_input("تا تاریخ (شمسی)", key="calls_filter_end", default_jalali=None)
 
     df = df_calls_filtered(name_q, st_statuses, start_date, end_date, None, only_creator)
     render_df(df)
 
-# ---------- پیگیری‌ها (2# با ویرایش در جدول) ----------
+# ---------- پیگیری‌ها (ویرایش وضعیت داخل جدول) ----------
 def page_followups():
     a = st.session_state.auth
     only_creator = None if a["role"]=="admin" else a["id"]
@@ -618,51 +621,47 @@ def page_followups():
             user_label = st.selectbox("کاربر *", list(user_map.keys()))
             title = st.text_input("عنوان اقدام بعدی *", placeholder="مثلاً: ارسال پیش‌فاکتور")
             details = st.text_area("جزئیات")
-            j_due = st.text_input("تاریخ پیگیری (شمسی YYYY/MM/DD) *", value=today_jalali_str())
+            g_due = jalali_date_input("تاریخ پیگیری (شمسی)", key="fu_date", default_jalali=today_jalali_str())
             if st.form_submit_button("ثبت پیگیری"):
-                d = jalali_str_to_date(j_due)
-                if not d: st.warning("فرمت تاریخ صحیح نیست.")
-                elif is_holiday_gregorian(d):   # 10#
+                if not g_due:
+                    st.warning("لطفاً تاریخ پیگیری را انتخاب کنید.")
+                elif is_holiday_gregorian(g_due):
                     st.error("تاریخ انتخابی تعطیل است. لطفاً روز کاری انتخاب کنید.")
                 else:
-                    create_followup(user_map[user_label], title, details, d, "در حال انجام", current_user_id())
+                    create_followup(user_map[user_label], title, details, g_due, "در حال انجام", current_user_id())
                     st.success("پیگیری ثبت شد.")
 
     st.markdown("### فهرست پیگیری‌ها + فیلتر")
     c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
     with c1: name_q = st.text_input("جستجو در نام کاربر/نام شرکت", key="fu_q")
     with c2: st_statuses = st.multiselect("فیلتر وضعیت", TASK_STATUSES, default=[], key="fu_st")
-    with c3: start_j = st.text_input("از تاریخ (شمسی)", key="fu_sd")
-    with c4: end_j   = st.text_input("تا تاریخ (شمسی)", key="fu_ed")
-    start_date = jalali_str_to_date(start_j) if start_j else None
-    end_date   = jalali_str_to_date(end_j) if end_j else None
+    with c3: start_date = jalali_date_input("از تاریخ (شمسی)", key="fu_filter_start", default_jalali=None)
+    with c4: end_date   = jalali_date_input("تا تاریخ (شمسی)", key="fu_filter_end", default_jalali=None)
 
     df = df_followups_filtered(name_q, st_statuses, start_date, end_date, None, only_creator)
-
     if df.empty:
         st.info("داده‌ای یافت نشد."); return
 
     # ویرایش در جدول: فقط ستون «وضعیت» قابل‌ویرایش باشد
-    df_edit = df.copy()
-    df_edit = df_edit[df_edit.columns[::-1]]  # ظاهر از راست
+    df_edit = df.copy()[df.columns[::-1]]  # ظاهر از راست
     cfg = {
         "وضعیت": st.column_config.SelectboxColumn(
             "وضعیت", help="برای تغییر وضعیت کلیک کنید", options=TASK_STATUSES, width="small"
         )
     }
-    edited = st.data_editor(df_edit, use_container_width=True, column_config=cfg, disabled=[
-        c for c in df_edit.columns if c != "وضعیت"
-    ])
+    edited = st.data_editor(df_edit, use_container_width=True, column_config=cfg,
+                            disabled=[c for c in df_edit.columns if c != "وضعیت"])
 
-    # تشخیص تغییرات وضعیت و اعمال در DB
-    changed = edited[["task_id","وضعیت"]].merge(df_edit[["task_id","وضعیت"]], on="task_id", suffixes=("_new","_old"))
+    # تشخیص و ذخیره‌ی تغییرات وضعیت
+    changed = edited[["task_id","وضعیت"]].merge(df_edit[["task_id","وضعیت"]],
+                                               on="task_id", suffixes=("_new","_old"))
     changed = changed[changed["وضعیت_new"] != changed["وضعیت_old"]]
     if not changed.empty:
         for _, row in changed.iterrows():
             update_followup_status(int(row["task_id"]), str(row["وضعیت_new"]))
         st.success("وضعیت‌های تغییر یافته ذخیره شد. صفحه را رفرش کنید.")
 
-# ---------- پروفایل کاربر (4#) ----------
+# ---------- پروفایل کاربر ----------
 def render_user_profile(user_id: int):
     conn = get_conn()
     info = conn.execute("""
@@ -700,7 +699,6 @@ def render_user_profile(user_id: int):
         render_df(df_fu)
 
     with tabs[3]:
-        # همکاران: افرادی که در همان شرکت هستند
         df_peers = pd.read_sql_query("""
             SELECT u2.id AS ID, u2.full_name AS نام, COALESCE(u2.phone,'') AS تلفن, COALESCE(u2.role,'') AS سمت
             FROM users u
@@ -731,9 +729,8 @@ else:
     elif page == "کاربران":       page_users()
     elif page == "تماس‌ها":       page_calls()
     elif page == "پیگیری‌ها":     page_followups()
-    elif page == "مدیریت دسترسی": 
+    elif page == "مدیریت دسترسی":
         if st.session_state.auth["role"]=="admin":
-            # ساخت کاربر ورود
             all_users = list_users_basic(None)
             map_users = {"— بدون لینک —": None}
             for u in all_users: map_users[f"{u[1]} (ID {u[0]})"] = u[0]
