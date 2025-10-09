@@ -1,4 +1,4 @@
 streamlit
 pandas
 persiantools
-streamlit_jalali_date
+git+https://github.com/mortezakarimi/streamlit-jalali-date.git
