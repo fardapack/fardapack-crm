@@ -253,6 +253,24 @@ def mark_followup_done(task_id: int):
     conn.execute("UPDATE followups SET status = 'پایان یافته' WHERE id = ?;", (task_id,))
     conn.commit()
     conn.close()
+# ---------------------------
+#  احراز هویت کاربران ورود (Login)
+# ---------------------------
+
+def auth_check(username: str, password: str) -> Optional[Dict]:
+    """بررسی صحت نام کاربری و رمز عبور"""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT id, username, password_sha256, role, linked_user_id FROM app_users WHERE username=?;",
+        (username.strip(),),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    uid, uname, pwh, role, linked_user_id = row
+    if sha256(password) == pwh:
+        return {"id": uid, "username": uname, "role": role, "linked_user_id": linked_user_id}
+    return None
 
 # جدول راست‌چین با ستون «ردیف» و جابجایی ID جلو
 
