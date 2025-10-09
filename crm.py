@@ -2,9 +2,6 @@
 """
 FardaPack Mini-CRM — Streamlit + SQLite (چندکاربره سبک) — نسخه با تاریخ شمسی، فرم‌های تاشونده و ویرایش در جدول
 """
-import streamlit as st
-st.cache_data.clear()
-st.cache_resource.clear()
 
 import sqlite3
 from datetime import datetime, date, timedelta
