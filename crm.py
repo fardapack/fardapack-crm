@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
 """
 FardaPack Mini-CRM — Streamlit + SQLite
-- فونت Vazirmatn + RTL کامل برای DataFrame/DataEditor
+
+- فونت Vazirmatn + RTL کامل + سرستون بولد
 - فیلترهای جمع‌وجور
-- پاپ‌آپ پروفایل/ویرایش/افزودن تماس/افزودن پیگیری از ستون عملیات (LinkColumn)
-- مخفی‌سازی ستون‌های ID/سمت/یادداشت از جدول کاربران
-- انتخاب کارشناس فروش شامل مدیر
-- محدودیت دید بر اساس owner_id (کارشناس فقط کاربران خود)
+- اکشن ردیفی با LinkColumn (سازگار با Streamlit 1.50 روی کلاد)
+- دیالوگ نمایش/ویرایش/ثبت تماس/ثبت پیگیری
+- جلوگیری از شماره تکراری
+- مالکیت (owner_id): مدیر همه را می‌بیند؛ کارشناس فقط کاربران خودش
+- سطح کاربر/شرکت، استان، حوزه فعالیت
 """
 
 import sqlite3
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import List, Tuple, Optional, Dict
 
 import pandas as pd
@@ -25,14 +27,14 @@ st.markdown(
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
-    html, body, [data-testid="stAppViewContainer"]{
+    html, body, [data-testid="stAppViewContainer"] {
         direction: rtl;
         text-align: right !important;
         font-family: "Vazirmatn", sans-serif !important;
     }
     [data-testid="stSidebar"] * { font-family: "Vazirmatn", sans-serif !important; }
 
-    /* هم برای DataFrame هم DataEditor */
+    /* هر دو: DataFrame و DataEditor راست‌چین و فونت */
     [data-testid="stDataFrame"], [data-testid="stDataEditor"] { direction: rtl !important; }
     [data-testid="stDataFrame"] div[role="gridcell"],
     [data-testid="stDataFrame"] div[role="columnheader"],
@@ -43,8 +45,11 @@ st.markdown(
         justify-content: flex-end !important;
         font-family: "Vazirmatn", sans-serif !important;
     }
+    /* بولد شدن سرستون‌ها */
     [data-testid="stDataFrame"] div[role="columnheader"],
-    [data-testid="stDataEditor"] div[role="columnheader"]{ font-weight: 700 !important; }
+    [data-testid="stDataEditor"] div[role="columnheader"]{
+        font-weight: 700 !important;
+    }
     </style>
     """,
     unsafe_allow_html=True
@@ -63,8 +68,7 @@ def today_jalali_str() -> str:
     return JalaliDate.today().strftime("%Y/%m/%d") if _jalali_supported() else ""
 
 def jalali_str_to_date(s: str) -> Optional[date]:
-    if not s or not _jalali_supported():
-        return None
+    if not s or not _jalali_supported(): return None
     try:
         g = JalaliDate.strptime(s.strip(), "%Y/%m/%d").to_gregorian()
         return date(g.year, g.month, g.day)
@@ -72,8 +76,7 @@ def jalali_str_to_date(s: str) -> Optional[date]:
         return None
 
 def date_to_jalali_str(d: date) -> str:
-    if not d or not _jalali_supported():
-        return ""
+    if not d or not _jalali_supported(): return ""
     try:
         return JalaliDate.fromgregorian(date=d).strftime("%Y/%m/%d")
     except Exception:
@@ -146,7 +149,7 @@ def init_db():
             domain TEXT,
             province TEXT,
             level TEXT NOT NULL DEFAULT 'هیچکدام',
-            owner_id INTEGER, -- app_users.id
+            owner_id INTEGER,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             created_by INTEGER,
             FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE SET NULL
@@ -189,6 +192,7 @@ def init_db():
         );
     """)
 
+    # ارتقاهای اسکیما (در صورت نبود)
     if not _column_exists(conn, "companies", "level"):
         cur.execute("ALTER TABLE companies ADD COLUMN level TEXT NOT NULL DEFAULT 'هیچکدام';")
     for t in ("companies","users","calls","followups"):
@@ -206,6 +210,7 @@ def init_db():
     cur.execute("CREATE INDEX IF NOT EXISTS idx_calls_user_datetime ON calls(user_id, call_datetime);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_followups_user_due ON followups(user_id, due_date);")
 
+    # اکانت اولیه
     if cur.execute("SELECT COUNT(*) FROM app_users;").fetchone()[0] == 0:
         cur.execute("INSERT INTO app_users (username, password_sha256, role) VALUES (?,?,?);",
                     ("admin", sha256("admin123"), "admin"))
@@ -218,6 +223,7 @@ def list_companies(_: Optional[int]) -> List[Tuple[int, str]]:
     conn.close(); return rows
 
 def list_sales_accounts_including_admins() -> List[Tuple[int, str, str]]:
+    """برگرداندن (id, username, role) برای agent و admin"""
     conn = get_conn()
     rows = conn.execute("SELECT id, username, role FROM app_users WHERE role IN ('agent','admin') ORDER BY role DESC, username;").fetchall()
     conn.close(); return rows
@@ -258,7 +264,7 @@ def create_user(first_name, last_name, phone, job_role, company_id, note,
     conn.commit(); conn.close(); return True, "کاربر ثبت شد."
 
 def update_user(user_id: int, **fields):
-    if "phone" in fields and phone_exists(fields["phone"], ignore_user_id=user_id):
+    if "phone" in fields and fields["phone"] and phone_exists(fields["phone"], ignore_user_id=user_id):
         return False, "شماره تماس تکراری است."
     sets, params = [], []
     for k,v in fields.items():
@@ -269,8 +275,14 @@ def update_user(user_id: int, **fields):
     conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id=?;", params)
     conn.commit(); conn.close(); return True, "ذخیره شد."
 
-def update_followup_status(task_id: int, new_status: str):
-    conn = get_conn(); conn.execute("UPDATE followups SET status=? WHERE id=?;", (new_status, task_id))
+def update_user_owner(user_id: int, new_owner_id: Optional[int]):
+    update_user(user_id, owner_id=new_owner_id)
+
+def update_user_level(user_id: int, new_level: str):
+    update_user(user_id, level=new_level)
+
+def update_company_level(company_id: int, new_level: str):
+    conn = get_conn(); conn.execute("UPDATE companies SET level=? WHERE id=?;", (new_level, company_id))
     conn.commit(); conn.close()
 
 def create_call(user_id, call_dt: datetime, status, description, creator_id):
@@ -283,6 +295,10 @@ def create_followup(user_id, title, details, due_date_val: date, status, creator
     conn = get_conn()
     conn.execute("INSERT INTO followups (user_id, title, details, due_date, status, created_by) VALUES (?,?,?,?,?,?);",
                  (user_id, title.strip(), details.strip(), due_date_val.isoformat(), status, creator_id))
+    conn.commit(); conn.close()
+
+def update_followup_status(task_id: int, new_status: str):
+    conn = get_conn(); conn.execute("UPDATE followups SET status=? WHERE id=?;", (new_status, task_id))
     conn.commit(); conn.close()
 
 # ====== DataFrames ======
@@ -506,33 +522,6 @@ def dlg_quick_followup(user_id: int):
             create_followup(user_id, title, details, d, "در حال انجام", current_user_id())
             st.success("پیگیری ثبت شد."); st.rerun()
 
-# ====== اکشن‌های جدول کاربران (LinkColumn) ======
-def _build_action_links(df_ops: pd.DataFrame) -> pd.DataFrame:
-    # df_ops باید user_id داشته باشد
-    def _mk(action, uid):
-        return f"?page=users&action={action}&uid={int(uid)}"
-    df_ops["👁️ نمایش"] = df_ops["user_id"].apply(lambda uid: _mk("view", uid))
-    df_ops["✏️ ویرایش"] = df_ops["user_id"].apply(lambda uid: _mk("edit", uid))
-    df_ops["📞 تماس"]  = df_ops["user_id"].apply(lambda uid: _mk("addcall", uid))
-    df_ops["✅ پیگیری"] = df_ops["user_id"].apply(lambda uid: _mk("addfu", uid))
-    return df_ops
-
-def _qp_get(name: str) -> Optional[str]:
-    try:
-        v = st.query_params.get(name)
-        if isinstance(v, list):  # احتیاط برای نسخه‌های قدیمی
-            return v[0] if v else None
-        return v
-    except Exception:
-        return None
-
-def _qp_clear():
-    try:
-        st.query_params.clear()
-    except Exception:
-        # نسخه‌های قدیمی‌تر
-        st.experimental_set_query_params()
-
 # ================== صفحات ==================
 def page_dashboard():
     st.subheader("داشبورد")
@@ -566,6 +555,15 @@ def page_companies():
     conn = get_conn()
     df = pd.read_sql_query("SELECT id AS ID, name AS نام, COALESCE(phone,'') AS تلفن, COALESCE(level,'') AS سطح FROM companies ORDER BY name COLLATE NOCASE;", conn)
     conn.close(); render_df(df)
+
+def _build_action_links(df_ops: pd.DataFrame) -> pd.DataFrame:
+    """چهار لینک عملیات برای هر ردیف می‌سازد (سازگار با Streamlit 1.50)."""
+    def _mk(action, uid): return f"?page=users&action={action}&uid={int(uid)}"
+    df_ops["👁 نمایش"] = df_ops["user_id"].apply(lambda uid: _mk("view", uid))
+    df_ops["✏ ویرایش"] = df_ops["user_id"].apply(lambda uid: _mk("edit", uid))
+    df_ops["📞 تماس"]  = df_ops["user_id"].apply(lambda uid: _mk("addcall", uid))
+    df_ops["✅ پیگیری"] = df_ops["user_id"].apply(lambda uid: _mk("addfu", uid))
+    return df_ops
 
 def page_users():
     st.subheader("ثبت و مدیریت کاربران (رابط‌ها)")
@@ -603,7 +601,7 @@ def page_users():
                                          user_status,domain,province,level,owner_map[owner_label],current_user_id())
                     st.success(msg) if ok else st.error(msg)
 
-    # فیلترها
+    # فیلترها (جمع‌وجور)
     st.markdown("### فیلتر کاربران")
     f1,f2,f3 = st.columns([1,1,1])
     first_q = f1.text_input("نام")
@@ -629,57 +627,58 @@ def page_users():
     for col_to_drop in ["ID","سمت","یادداشت"]:
         if col_to_drop in df.columns: df = df.drop(columns=[col_to_drop])
 
-    if not df.empty:
-        # نمایش جدول داده‌ها بدون عملیات
-        st.dataframe(df, use_container_width=True)
-
-        # جدول عملیات با LinkColumn
-        df_ops = df.copy()
-
-        # به user_id نیاز داریم: از روی نام کامل مپ می‌کنیم
-        conn = get_conn()
-        id_map = pd.read_sql_query("SELECT id, full_name FROM users;", conn)
-        conn.close()
-        name_to_id = dict(zip(id_map["full_name"], id_map["id"]))
-        df_ops["user_id"] = df_ops["نام_کامل"].map(name_to_id)
-
-        df_ops = _build_action_links(df_ops)
-
-        # فقط ستون‌های عملیاتی + شناسه‌ها
-        ops_cols = ["user_id","نام_کامل","👁️ نمایش","✏️ ویرایش","📞 تماس","✅ پیگیری"]
-        df_ops = df_ops[[c for c in ops_cols if c in df_ops.columns]]
-
-        colcfg = {
-            "👁️ نمایش": st.column_config.LinkColumn("نمایش", display_text="🔍", help="نمایش پروفایل"),
-            "✏️ ویرایش": st.column_config.LinkColumn("ویرایش", display_text="✏️", help="ویرایش پروفایل"),
-            "📞 تماس":  st.column_config.LinkColumn("تماس", display_text="📞", help="ثبت تماس"),
-            "✅ پیگیری": st.column_config.LinkColumn("پیگیری", display_text="🗓️", help="ثبت پیگیری"),
-            "user_id": st.column_config.Column(width="small"),
-        }
-        st.markdown("**اقدامات سریع**")
-        st.data_editor(
-            df_ops,
-            hide_index=True,
-            use_container_width=True,
-            column_config=colcfg,
-            disabled=list(df_ops.columns)  # فقط خواندنی
-        )
-
-        # --- هندل کردن اکشن‌های لینک از query params ---
-        if (_qp_get("page") == "users") and _qp_get("uid") and _qp_get("action"):
-            try:
-                uid = int(_qp_get("uid"))
-            except Exception:
-                uid = None
-            action = _qp_get("action")
-            if uid:
-                if action == "view":    dlg_profile(uid)
-                elif action == "edit":  dlg_edit_user(uid)
-                elif action == "addcall": dlg_quick_call(uid)
-                elif action == "addfu":   dlg_quick_followup(uid)
-            _qp_clear()
-    else:
+    if df.empty:
         st.info("کاربری یافت نشد.")
+        return
+
+    # برای ساخت لینک اکشن‌ها باید user_id واقعی داشته باشیم
+    conn = get_conn()
+    id_map = pd.read_sql_query("SELECT id, full_name FROM users;", conn)
+    conn.close()
+    name_to_id = dict(zip(id_map["full_name"], id_map["id"]))
+    df_view = df.copy()
+    df_view["user_id"] = df_view["نام_کامل"].map(name_to_id).fillna(0).astype(int)
+
+    # ساخت ستون‌های لینک
+    df_ops = _build_action_links(df_view.copy())
+
+    # ترتیب ستون‌ها: ردیف (بعداً در data_editor اتومات اضافه نمی‌شود؛ پس رها می‌کنیم)،
+    # ستون‌های داده، و در انتها ستون‌های عملیات
+    action_cols = ["👁 نمایش","✏ ویرایش","📞 تماس","✅ پیگیری"]
+    show_cols = [c for c in df.columns] + action_cols
+    df_show = df_ops[show_cols]
+
+    # تنظیمات ستون‌ها
+    colcfg = {
+        "👁 نمایش": st.column_config.LinkColumn("نمایش پروفایل", display_text="🔍", help="نمایش پروفایل کاربر", width="small"),
+        "✏ ویرایش": st.column_config.LinkColumn("ویرایش", display_text="✏️", help="ویرایش اطلاعات کاربر", width="small"),
+        "📞 تماس":  st.column_config.LinkColumn("افزودن تماس", display_text="📞", help="ثبت تماس جدید برای کاربر", width="small"),
+        "✅ پیگیری": st.column_config.LinkColumn("افزودن پیگیری", display_text="🗓️", help="ثبت وظیفه/پیگیری جدید", width="small"),
+    }
+
+    st.data_editor(
+        df_show,
+        use_container_width=True,
+        hide_index=True,
+        column_config=colcfg,
+        disabled=list(df_show.columns)  # جدول فقط خواندنی
+    )
+
+    # --- هندل کردن اکشن‌های لینک از روی پارامترهای URL ---
+    q = st.query_params
+    if q.get("page") == "users" and q.get("uid") and q.get("action"):
+        uid = int(q.get("uid"))
+        action = q.get("action")
+        if action == "view":
+            dlg_profile(uid)
+        elif action == "edit":
+            dlg_edit_user(uid)
+        elif action == "addcall":
+            dlg_quick_call(uid)
+        elif action == "addfu":
+            dlg_quick_followup(uid)
+        # پاک‌کردن پارامترها تا با رفرش دوباره باز نشود
+        st.query_params.clear()
 
 def page_calls():
     only_owner = None if is_admin() else current_user_id()
@@ -785,7 +784,7 @@ if not st.session_state.auth:
     login_view()
 else:
     with st.sidebar:
-        st.markdown("**فردا پک**")
+        st.markdown("**فردا پک**")  # عنوان سایدبار
         header_userbox()
         role = st.session_state.auth["role"]
         page = st.radio("منو", ("داشبورد","شرکت‌ها","کاربران","تماس‌ها","پیگیری‌ها") + (("مدیریت دسترسی",) if role=="admin" else tuple()), index=0)
