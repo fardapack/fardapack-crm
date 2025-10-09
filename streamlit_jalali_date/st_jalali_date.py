@@ -1,34 +1,17 @@
-# -*- coding: utf-8 -*-
-import os
-from pathlib import Path
+import json, os
 import streamlit as st
 import streamlit.components.v1 as components
 
-# مسیر فولدر build
-_build_dir = Path(__file__).parent / "frontend" / "build"
-_component_func = components.declare_component(
-    "jalali_date_input",
-    path=str(_build_dir),
+# مسیر فولدر build کنار همین فایل
+_build_dir = os.path.join(os.path.dirname(__file__), "frontend", "build")
+_component = components.declare_component(
+    "jalali_date", path=_build_dir
 )
 
-def jalali_date_input(label: str,
-                      value: str | None = None,
-                      key: str | None = None,
-                      placeholder: str = "",
-                      disabled: bool = False) -> str | None:
+def jalali_date_input(label: str, key: str, value: str = "", format: str = "YYYY/MM/DD"):
     """
-    ورودی ساده‌ی تاریخ شمسی (فرمت: YYYY/MM/DD)
-    - label: لیبل فیلد
-    - value: مقدار اولیه (مثال '1403/07/18')
-    - placeholder: متن راهنما
-    - disabled: غیرفعال شدن فیلد
-    خروجی: رشته‌ی تاریخ شمسی یا None
+    یک ورودی تاریخ شمسی بسیار ساده.
+    - value مثل '1403/07/18'
+    - خروجی هم همان رشته (یا None اگر کاربر چیزی وارد نکرد)
     """
-    return _component_func(
-        label=label,
-        value=value or "",
-        placeholder=placeholder,
-        disabled=bool(disabled),
-        default=value or "",
-        key=key,
-    )
+    return _component(label=label, key=key, default=value, fmt=format)
