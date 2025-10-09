@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Jalali Date Input (Streamlit Component)</title>
+
+  <!-- پل ارتباطی کامپوننت -->
+  <script src="https://unpkg.com/streamlit-component-lib/dist/index.js"></script>
+
+  <!-- فونت وزیرمتن -->
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;600;700&display=swap" rel="stylesheet">
+
+  <!-- Persian datepicker -->
+  <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/persian-date@1.0.6/dist/persian-date.js"></script>
+  <link  href="https://cdn.jsdelivr.net/npm/persian-datepicker@1.2.0/dist/css/persian-datepicker.min.css" rel="stylesheet"/>
+  <script src="https://cdn.jsdelivr.net/npm/persian-datepicker@1.2.0/dist/js/persian-datepicker.min.js"></script>
+
+  <style>
+    body {margin:0; padding:.5rem .75rem; font-family:"Vazirmatn",sans-serif; direction:rtl; text-align:right; background:transparent; color:#222}
+    .field{display:flex; flex-direction:column; gap:.35rem}
+    label{font-weight:600; font-size:.95rem}
+    input[type="text"]{width:100%; font-family:inherit; font-size:.95rem; padding:.55rem .7rem; border:1px solid #e1e1e1; border-radius:.5rem; outline:none}
+    input[type="text"]:focus{border-color:#7c3aed; box-shadow:0 0 0 3px rgba(124,58,237,.1)}
+    .disabled input{background:#f7f7f7; color:#888; cursor:not-allowed}
+  </style>
+</head>
+<body>
+  <div id="root" class="field">
+    <label id="lbl"></label>
+    <input id="inp" type="text" placeholder="" />
+  </div>
+
+  <script>
+    const setH = () => Streamlit.setFrameHeight(120);
+
+    function onRender(event) {
+      const args = event.detail.args || {};
+      const label = args.label || "";
+      const value = (args.value || "").trim();
+      const placeholder = args.placeholder || "";
+      const disabled = !!args.disabled;
+
+      document.getElementById("lbl").textContent = label;
+      const $inp = $("#inp");
+      $inp.attr("placeholder", placeholder);
+      $inp.prop("disabled", disabled);
+
+      // اگر قبلاً دیت‌پیکر داشت، پاک و دوباره بساز
+      try { $inp.data('datepicker').destroy(); } catch(e) {}
+
+      $inp.pDatepicker({
+        format: "YYYY/MM/DD",
+        observer: true,
+        initialValueType: "gregorian",
+        autoClose: true,
+        calendar: { persian: { locale: 'fa' } },
+        onSelect: function(unix){
+          const p = new persianDate(unix).format("YYYY/MM/DD");
+          Streamlit.setComponentValue(p);
+        }
+      });
+
+      if (value) {
+        try {
+          $inp.val(value);
+          $inp.pDatepicker("setDate", new persianDate().parse(value).valueOf());
+        } catch(e) { $inp.val(value); }
+      } else {
+        $inp.val("");
+      }
+
+      setH();
+    }
+
+    Streamlit.events.addEventListener("streamlit:render", onRender);
+    Streamlit.setComponentReady();
+    setH();
+  </script>
+</body>
+</html>
