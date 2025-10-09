@@ -29,7 +29,30 @@ from typing import List, Tuple, Optional, Dict
 import pandas as pd
 import streamlit as st
 import hashlib
+# ---- UI setup (RTL + tables) ----
+st.set_page_config(page_title="FardaPack Mini-CRM", page_icon="📇", layout="wide")
 
+st.markdown(
+    """
+    <style>
+    /* کل اپ RTL */
+    html, body, [data-testid="stAppViewContainer"] { direction: rtl; text-align: right; }
+
+    /* st.dataframe (گرید) راست‌چین */
+    div[data-testid="stDataFrame"] div[role="grid"] { direction: rtl; }
+    div[data-testid="stDataFrame"] [role="columnheader"],
+    div[data-testid="stDataFrame"] [role="gridcell"] { text-align: right !important; }
+
+    /* st.table راست‌چین */
+    [data-testid="stTable"] table { direction: rtl; }
+    [data-testid="stTable"] th, [data-testid="stTable"] td { text-align: right !important; }
+
+    /* لیبل‌های ورودی‌ها کمی پررنگ‌تر */
+    .stSelectbox label, .stTextInput label, .stTextArea label, .stDateInput label, .stTimeInput label { font-weight: 600; }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 # تاریخ شمسی
 try:
     from persiantools.jdatetime import JalaliDate
