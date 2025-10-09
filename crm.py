@@ -124,7 +124,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             call_datetime TEXT NOT NULL,
-            status TEXT NOT NULL CHECK(status IN ({','.join(['?']*len(CALL_STATUSES))})),
+            status TEXT NOT NULL CHECK(status IN ('ناموفق','موفق','خاموش','رد تماس')),
             description TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -142,7 +142,7 @@ def init_db():
             title TEXT NOT NULL,
             details TEXT,
             due_date TEXT NOT NULL,
-            status TEXT NOT NULL CHECK(status IN ({','.join(['?']*len(TASK_STATUSES))})) DEFAULT 'در حال انجام',
+            status TEXT NOT NULL CHECK(status IN ('در حال انجام','پایان یافته')) DEFAULT 'در حال انجام',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         );
