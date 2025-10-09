@@ -601,14 +601,6 @@ def page_users():
 
     # ستون عملیات (دکمه‌های آیکنی) با st.data_editor
     if not df.empty:
-        # آماده‌سازی کلید کاربر برای عملیات
-        conn = get_conn()
-        ids_series = pd.read_sql_query("""
-           SELECT id, first_name AS نام, last_name AS نام_خانوادگی
-           FROM users
-           WHERE id IN ({})
-        """.format(",".join([str(i) for i in pd.read_sql_query("SELECT ID FROM users ORDER BY id DESC", conn)["ID"].tolist()] or ["-1"])), conn)
-        conn.close()
 
         df_ops = df.copy()
         # user_id واقعی لازم داریم؛ آن را از full_name مپ می‌کنیم
