@@ -1,41 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-FardaPack Mini-CRM — Streamlit + SQLite (کاملاً ساده و چندکاربره سبک)
--------------------------------------------------------------------
+FardaPack Mini-CRM — Streamlit + SQLite (چندکاربره سبک)
+-------------------------------------------------------
 
 ✦ امکانات:
-- ثبت کاربر (افراد/رابط‌ها)
-- ثبت شرکت
-- لینک‌کردن کاربر به شرکت (فیلد «شرکت» داخل فرم کاربر)
-- ثبت تماس برای هر کاربر + فیلتر تاریخ/نام/وضعیت
-  (وضعیت تماس: «ناموفق»، «موفق»، «خاموش»، «رد تماس»)
-- ثبت پیگیری برای هر کاربر + فیلتر تاریخ/کاربر/وضعیت
-  (وضعیت پیگیری: «در حال انجام»، «پایان یافته»)
-- **چندکاربره‌ی سبک (آنلاین):** ورود ساده (لاگین) با نقش‌ها: «مدیر» و «بازاریاب».
-  - بازاریاب فقط تماس‌ها و پیگیری‌های خودش را می‌بیند/می‌سازد.
-  - مدیر همه‌چیز را می‌بیند و می‌تواند کاربرِ ورود (app user) بسازد.
+- ثبت شرکت، کاربر (رابط)، تماس، پیگیری
+- فیلتر تاریخ/نام/وضعیت + خروجی CSV
+- ورود (لاگین) با نقش‌های «مدیر / بازاریاب»
+  • بازاریاب فقط داده‌های لینک‌شده به خودش را می‌بیند
+  • مدیر همه‌چیز را می‌بیند و کاربر ورود می‌سازد
 
-✦ اجرا:
-1) Python 3.9+ نصب باشد.
-2) در پوشه‌ی پروژه:
-   - Windows:
-       python -m venv .venv
-       .venv\Scripts\activate
-   - macOS/Linux:
-       python3 -m venv .venv
-       source .venv/bin/activate
-3) نصب وابستگی‌ها:
-   pip install streamlit pandas
-4) فایل را با نام crm.py ذخیره کنید و اجرا:
-   streamlit run crm.py
+✦ اجرا محلی:
+    pip install -r requirements.txt
+    streamlit run crm.py
 
-✦ ورود پیش‌فرض (لطفاً فوراً عوض کنید):
-- مدیر: کاربر «admin» با رمز «admin123». به صفحه «مدیریت دسترسی» بروید و کاربران را بسازید/رمز را عوض کنید.
-
-✦ نکته‌ها:
-- اولین اجرا یک فایل پایگاه‌داده‌ی «crm.db» کنار اسکریپت می‌سازد.
-- برای پشتیبان‌گیری کافیست همین فایل «crm.db» را کپی کنید.
-- این ابزار تک‌سروری و سبک است (SQLite + WAL). برای ۲–۳ کاربر همزمان کفایت می‌کند؛ برای تیم‌های بزرگ‌تر بعداً می‌توان به PostgreSQL مهاجرت کرد.
+✦ نکات:
+- پایگاه‌داده: crm.db کنار فایل ایجاد می‌شود (WAL برای همزمانی سبک)
+- ورود پیش‌فرض (پس از اولین اجرا سریع عوض کنید): admin / admin123
 """
 
 import sqlite3
@@ -47,16 +28,13 @@ import streamlit as st
 import hashlib
 
 # ---------------------------
-#  تنظیمات اولیه رابط کاربری
+#  تنظیمات اولیه UI
 # ---------------------------
 st.set_page_config(page_title="FardaPack Mini-CRM", page_icon="📇", layout="wide")
-
-# راست‌به‌چپ و فارسی‌سازی ساده
 st.markdown(
     """
     <style>
     html, body, [class*="css"] { direction: rtl; text-align: right; }
-    .rtl { direction: rtl; text-align: right; }
     .stSelectbox label, .stTextInput label, .stTextArea label, .stDateInput label, .stTimeInput label { font-weight: 600; }
     </style>
     """,
@@ -64,24 +42,20 @@ st.markdown(
 )
 
 # ---------------------------
-#  پایگاه داده
+#  پایگاه‌داده
 # ---------------------------
 DB_PATH = "crm.db"
-
 CALL_STATUSES = ["ناموفق", "موفق", "خاموش", "رد تماس"]
 TASK_STATUSES = ["در حال انجام", "پایان یافته"]
-
 
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10)
     conn.execute("PRAGMA foreign_keys = ON;")
-    conn.execute("PRAGMA journal_mode=WAL;")  # بهبود همزمانی در SQLite
+    conn.execute("PRAGMA journal_mode=WAL;")  # بهبود همزمانی
     return conn
-
 
 def sha256(txt: str) -> str:
     return hashlib.sha256(txt.encode("utf-8")).hexdigest()
-
 
 def init_db():
     conn = get_conn()
@@ -119,7 +93,7 @@ def init_db():
 
     # تماس‌ها
     cur.execute(
-        f"""
+        """
         CREATE TABLE IF NOT EXISTS calls (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -132,9 +106,9 @@ def init_db():
         """
     )
 
-    # پیگیری‌ها (وظایف بعدی)
+    # پیگیری‌ها
     cur.execute(
-        f"""
+        """
         CREATE TABLE IF NOT EXISTS followups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -148,7 +122,7 @@ def init_db():
         """
     )
 
-    # کاربران ورود به برنامه (app users)
+    # کاربران ورود (app_users)
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS app_users (
@@ -163,14 +137,14 @@ def init_db():
         """
     )
 
-    # ایندکس‌های مفید
+    # ایندکس‌ها
     cur.execute("CREATE INDEX IF NOT EXISTS idx_users_company ON users(company_id);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_calls_user_datetime ON calls(user_id, call_datetime);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_followups_user_due ON followups(user_id, due_date);")
 
-    # ایجاد ادمین پیش‌فرض اگر وجود ندارد
-    has_any = cur.execute("SELECT COUNT(*) FROM app_users;").fetchone()[0]
-    if has_any == 0:
+    # ادمین پیش‌فرض
+    any_user = cur.execute("SELECT COUNT(*) FROM app_users;").fetchone()[0]
+    if any_user == 0:
         cur.execute(
             "INSERT INTO app_users (username, password_sha256, role, linked_user_id) VALUES (?,?,?,NULL);",
             ("admin", sha256("admin123"), "admin"),
@@ -179,11 +153,9 @@ def init_db():
     conn.commit()
     conn.close()
 
-
 # ---------------------------
-#  توابع کمکی DB
+#  توابع کمکی
 # ---------------------------
-
 
 def list_companies() -> List[Tuple[int, str]]:
     conn = get_conn()
@@ -191,13 +163,11 @@ def list_companies() -> List[Tuple[int, str]]:
     conn.close()
     return rows
 
-
 def list_users() -> List[Tuple[int, str, Optional[int]]]:
     conn = get_conn()
     rows = conn.execute("SELECT id, full_name, company_id FROM users ORDER BY full_name COLLATE NOCASE;").fetchall()
     conn.close()
     return rows
-
 
 def create_company(name: str, phone: str = "", address: str = "", note: str = ""):
     conn = get_conn()
@@ -208,7 +178,6 @@ def create_company(name: str, phone: str = "", address: str = "", note: str = ""
     conn.commit()
     conn.close()
 
-
 def create_user(full_name: str, phone: str, role: str, company_id: Optional[int], note: str = ""):
     conn = get_conn()
     conn.execute(
@@ -217,7 +186,6 @@ def create_user(full_name: str, phone: str, role: str, company_id: Optional[int]
     )
     conn.commit()
     conn.close()
-
 
 def create_call(user_id: int, call_dt: datetime, status: str, description: str = ""):
     conn = get_conn()
@@ -228,7 +196,6 @@ def create_call(user_id: int, call_dt: datetime, status: str, description: str =
     conn.commit()
     conn.close()
 
-
 def create_followup(user_id: int, title: str, details: str, due_date_val: date, status: str):
     conn = get_conn()
     conn.execute(
@@ -238,12 +205,7 @@ def create_followup(user_id: int, title: str, details: str, due_date_val: date, 
     conn.commit()
     conn.close()
 
-
-# احراز هویت ساده
-
-def sha_ok(input_pwd: str, stored_sha: str) -> bool:
-    return sha256(input_pwd) == stored_sha
-
+# احراز هویت
 
 def auth_check(username: str, password: str) -> Optional[Dict]:
     conn = get_conn()
@@ -255,10 +217,9 @@ def auth_check(username: str, password: str) -> Optional[Dict]:
     if not row:
         return None
     uid, uname, pwh, role, linked_user_id = row
-    if sha_ok(password, pwh):
+    if sha256(password) == pwh:
         return {"id": uid, "username": uname, "role": role, "linked_user_id": linked_user_id}
     return None
-
 
 def create_app_user(username: str, password: str, role: str, linked_user_id: Optional[int]):
     conn = get_conn()
@@ -269,6 +230,7 @@ def create_app_user(username: str, password: str, role: str, linked_user_id: Opt
     conn.commit()
     conn.close()
 
+# کوئری‌های DataFrame با فیلتر
 
 def df_calls_filtered(name_query: str, statuses: List[str], start: Optional[date], end: Optional[date], only_user_id: Optional[int]=None) -> pd.DataFrame:
     conn = get_conn()
@@ -311,7 +273,6 @@ def df_calls_filtered(name_query: str, statuses: List[str], start: Optional[date
     df = pd.read_sql_query(sql, conn, params=params)
     conn.close()
     return df
-
 
 def df_followups_filtered(name_query: str, statuses: List[str], start: Optional[date], end: Optional[date], only_user_id: Optional[int]=None) -> pd.DataFrame:
     conn = get_conn()
@@ -356,20 +317,17 @@ def df_followups_filtered(name_query: str, statuses: List[str], start: Optional[
     conn.close()
     return df
 
-
 def mark_followup_done(task_id: int):
     conn = get_conn()
     conn.execute("UPDATE followups SET status = 'پایان یافته' WHERE id = ?;", (task_id,))
     conn.commit()
     conn.close()
 
-
 # ---------------------------
-#  UI & Auth
+#  UI + Auth
 # ---------------------------
-
 if "auth" not in st.session_state:
-    st.session_state.auth = None  # dict: {id, username, role, linked_user_id}
+    st.session_state.auth = None
 
 
 def login_view():
@@ -394,12 +352,10 @@ def header_userbox():
     st.markdown(f"**کاربر:** {a['username']} — **نقش:** {'مدیر' if a['role']=='admin' else 'بازاریاب'}")
     st.button("خروج", on_click=lambda: st.session_state.update({"auth": None}))
 
-
-# --- صفحات ---
+# صفحات
 
 def page_dashboard():
     st.subheader("داشبورد ساده")
-
     conn = get_conn()
     total_companies = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
     total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
@@ -414,10 +370,8 @@ def page_dashboard():
     c4.metric("پیگیری‌های باز", total_tasks_open)
 
     st.divider()
-    st.markdown("### گام‌های پیشنهادی:")
-    st.markdown("1) از منوی کناری، ابتدا **شرکت**‌ها را بسازید. سپس **کاربر** اضافه کنید و شرکت را برایش انتخاب کنید.")
-    st.markdown("2) بعد به صفحه‌ی **تماس‌ها** بروید و برای هر کاربر تماس ثبت کنید.")
-    st.markdown("3) در **پیگیری‌ها** اقدام بعدی را ثبت و پیگیری کنید.")
+    st.markdown("1) از منو: شرکت‌ها و کاربران را بسازید.")
+    st.markdown("2) تماس‌ها را ثبت کنید؛ 3) پیگیری‌ها را مدیریت کنید.")
 
 
 def page_companies():
@@ -437,15 +391,13 @@ def page_companies():
             else:
                 create_company(name, phone, address, note)
                 st.success(f"شرکت «{name}» ثبت شد.")
-
     st.divider()
-    st.markdown("### فهرست شرکت‌ها")
     rows = list_companies()
     if rows:
         df = pd.DataFrame(rows, columns=["ID", "نام شرکت"]).set_index("ID")
         st.dataframe(df, use_container_width=True)
     else:
-        st.info("هنوز شرکتی ثبت نشده است.")
+        st.info("شرکتی ثبت نشده است.")
 
 
 def page_users():
@@ -453,12 +405,10 @@ def page_users():
         st.info("این بخش فقط برای مدیر در دسترس است.")
         return
     st.subheader("ثبت و مدیریت کاربران (رابط‌ها)")
-
     companies = list_companies()
     company_options = {"— بدون شرکت —": None}
     for cid, cname in companies:
         company_options[cname] = cid
-
     with st.form("user_form", clear_on_submit=True):
         full_name = st.text_input("نام و نام‌خانوادگی *")
         phone = st.text_input("تلفن")
@@ -472,11 +422,7 @@ def page_users():
             else:
                 create_user(full_name, phone, role, company_options[company_name], note)
                 st.success(f"کاربر «{full_name}» ثبت شد.")
-
-    st.expander("افزودن سریع شرکت جدید").markdown("از صفحه‌ی شرکت‌ها هم می‌توانید اضافه کنید؛ این فقط یادآوری است.")
-
     st.divider()
-    st.markdown("### فهرست کاربران")
     rows = list_users()
     if rows:
         conn = get_conn()
@@ -497,89 +443,69 @@ def page_users():
         conn.close()
         st.dataframe(df, use_container_width=True)
     else:
-        st.info("هنوز کاربری ثبت نشده است.")
+        st.info("کاربری ثبت نشده است.")
+
+
+def _user_selection_map_for_role():
+    all_users = list_users()
+    a = st.session_state.auth
+    if a["role"] == "admin":
+        return {f"{u[1]} (ID {u[0]})": u[0] for u in all_users}
+    else:
+        linked_id = a.get("linked_user_id")
+        all_users = [u for u in all_users if u[0] == linked_id]
+        return {f"{u[1]} (ID {u[0]})": u[0] for u in all_users}
 
 
 def page_calls():
     st.subheader("ثبت تماس‌ها")
-
-    all_users = list_users()
-    if not all_users:
-        st.warning("ابتدا کاربر اضافه کنید (از منوی 'کاربران' توسط مدیر).")
+    user_map = _user_selection_map_for_role()
+    if not user_map:
+        st.warning("ابتدا مدیر باید شما را به یک 'کاربر (رابط)' لینک کند.")
         return
-
-    a = st.session_state.auth
-    if a["role"] == "admin":
-        user_map = {f"{u[1]} (ID {u[0]})": u[0] for u in all_users}
-    else:
-        # برای بازاریاب فقط کاربر لینک‌شده خودش
-        linked_id = a.get("linked_user_id")
-        all_users = [u for u in all_users if u[0] == linked_id]
-        user_map = {f"{u[1]} (ID {u[0]})": u[0] for u in all_users}
-        if not user_map:
-            st.error("مدیر هنوز شما را به یک 'کاربر (رابط)' لینک نکرده است.")
-            return
-
     with st.form("call_form", clear_on_submit=True):
         user_label = st.selectbox("کاربر *", list(user_map.keys()))
         today = date.today()
         now_hm = datetime.now().time().replace(second=0, microsecond=0)
         d = st.date_input("تاریخ تماس *", today)
         t = st.time_input("زمان تماس *", now_hm)
-        status = st.selectbox("وضعیت تماس *")
+        status = st.selectbox("وضعیت تماس *", CALL_STATUSES)
         desc = st.text_area("توضیحات")
         submitted = st.form_submit_button("ثبت تماس")
         if submitted:
             call_dt = datetime.combine(d, t)
             create_call(user_map[user_label], call_dt, status, desc)
             st.success("تماس ثبت شد.")
-
     st.divider()
     st.markdown("### فهرست تماس‌ها + فیلتر")
     c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
     with c1:
         name_q = st.text_input("جستجو در نام کاربر/نام شرکت")
     with c2:
-      st_statuses = st.multiselect("فیلتر وضعیت", default=[])
+        st_statuses = st.multiselect("فیلتر وضعیت", CALL_STATUSES, default=[])
     with c3:
         start_date = st.date_input("از تاریخ", value=None)
     with c4:
         end_date = st.date_input("تا تاریخ", value=None)
-
-    only_uid = None if a["role"]=="admin" else a.get("linked_user_id")
+    only_uid = None if st.session_state.auth["role"]=="admin" else st.session_state.auth.get("linked_user_id")
     df = df_calls_filtered(name_q, st_statuses, start_date, end_date, only_user_id=only_uid)
     st.dataframe(df, use_container_width=True)
-
     if not df.empty:
-        csv = df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("دانلود CSV تماس‌ها", data=csv, file_name="calls.csv", mime="text/csv")
+        st.download_button("دانلود CSV تماس‌ها", df.to_csv(index=False).encode('utf-8-sig'), file_name="calls.csv", mime="text/csv")
 
 
 def page_followups():
     st.subheader("ثبت پیگیری‌ها")
-
-    all_users = list_users()
-    if not all_users:
-        st.warning("ابتدا کاربر اضافه کنید (از منوی 'کاربران' توسط مدیر).")
+    user_map = _user_selection_map_for_role()
+    if not user_map:
+        st.warning("ابتدا مدیر باید شما را به یک 'کاربر (رابط)' لینک کند.")
         return
-
-    a = st.session_state.auth
-    if a["role"] == "admin":
-        user_map = {f"{u[1]} (ID {u[0]})": u[0] for u in all_users}
-    else:
-        linked_id = a.get("linked_user_id")
-        all_users = [u for u in all_users if u[0] == linked_id]
-        user_map = {f"{u[1]} (ID {u[0]})": u[0] for u in all_users}
-        if not user_map:
-            st.error("مدیر هنوز شما را به یک 'کاربر (رابط)' لینک نکرده است.")
-            return
-
     with st.form("fu_form", clear_on_submit=True):
         user_label = st.selectbox("کاربر *", list(user_map.keys()))
         title = st.text_input("عنوان اقدام بعدی *", placeholder="مثلاً: ارسال پیش‌فاکتور")
         details = st.text_area("جزئیات")
         due = st.date_input("تاریخ پیگیری *", value=date.today() + timedelta(days=1))
-        status = st.selectbox("وضعیت" index=0)
+        status = st.selectbox("وضعیت", TASK_STATUSES, index=0)
         submitted = st.form_submit_button("ثبت پیگیری")
         if submitted:
             if not title.strip():
@@ -587,27 +513,22 @@ def page_followups():
             else:
                 create_followup(user_map[user_label], title, details, due, status)
                 st.success("پیگیری ثبت شد.")
-
     st.divider()
     st.markdown("### فهرست پیگیری‌ها + فیلتر")
     c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
     with c1:
         name_q = st.text_input("جستجو در نام کاربر/نام شرکت", key="fu_q")
     with c2:
-        st_statuses = st.multiselect("فیلتر وضعیت" default=[], key="fu_st")
+        st_statuses = st.multiselect("فیلتر وضعیت", TASK_STATUSES, default=[], key="fu_st")
     with c3:
         start_date = st.date_input("از تاریخ", value=None, key="fu_sd")
     with c4:
         end_date = st.date_input("تا تاریخ", value=None, key="fu_ed")
-
-    only_uid = None if a["role"]=="admin" else a.get("linked_user_id")
+    only_uid = None if st.session_state.auth["role"]=="admin" else st.session_state.auth.get("linked_user_id")
     df = df_followups_filtered(name_q, st_statuses, start_date, end_date, only_user_id=only_uid)
     st.dataframe(df, use_container_width=True)
-
     if not df.empty:
-        csv = df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("دانلود CSV پیگیری‌ها", data=csv, file_name="followups.csv", mime="text/csv")
-
+        st.download_button("دانلود CSV پیگیری‌ها", df.to_csv(index=False).encode('utf-8-sig'), file_name="followups.csv", mime="text/csv")
     st.markdown("#### عملیات سریع")
     with st.form("done_form"):
         task_id = st.number_input("ID پیگیری برای اتمام", min_value=1, step=1)
@@ -625,13 +546,10 @@ def page_access_admin():
         st.info("این بخش فقط برای مدیر در دسترس است.")
         return
     st.subheader("مدیریت دسترسی (کاربران ورود)")
-
-    # فرم ساخت کاربر ورود
     all_users = list_users()
     map_users = {"— بدون لینک —": None}
     for u in all_users:
         map_users[f"{u[1]} (ID {u[0]})"] = u[0]
-
     with st.form("new_app_user", clear_on_submit=True):
         username = st.text_input("نام کاربری *")
         password = st.text_input("رمز عبور *", type="password")
@@ -647,19 +565,15 @@ def page_access_admin():
                     st.success("کاربر ایجاد شد.")
                 except sqlite3.IntegrityError:
                     st.error("این نام کاربری قبلاً وجود دارد.")
-
     st.divider()
-    st.markdown("### نکات:")
-    st.markdown("- برای بازاریاب‌ها نقش **agent** انتخاب کنید و حتماً به یک 'کاربر (رابط)' لینک کنید.")
-    st.markdown("- رمز پیش‌فرض admin را سریعاً تغییر دهید: یک کاربر **admin** جدید بسازید و قدیمی را حذف کنید (به‌صورت دستی در DB).")
-
+    st.markdown("- برای بازاریاب‌ها نقش **agent** تنظیم و به یک 'کاربر (رابط)' لینک کنید.")
 
 # ---------------------------
 #  اجرای برنامه
 # ---------------------------
 init_db()
 
-if "auth" not in st.session_state or not st.session_state.auth:
+if not st.session_state.auth:
     login_view()
 else:
     with st.sidebar:
@@ -669,27 +583,15 @@ else:
         if role == "admin":
             page = st.radio(
                 "منو",
-                (
-                    "داشبورد",
-                    "شرکت‌ها",
-                    "کاربران",
-                    "تماس‌ها",
-                    "پیگیری‌ها",
-                    "مدیریت دسترسی",
-                ),
+                ("داشبورد", "شرکت‌ها", "کاربران", "تماس‌ها", "پیگیری‌ها", "مدیریت دسترسی"),
                 index=0,
             )
         else:
             page = st.radio(
                 "منو",
-                (
-                    "داشبورد",
-                    "تماس‌ها",
-                    "پیگیری‌ها",
-                ),
+                ("داشبورد", "تماس‌ها", "پیگیری‌ها"),
                 index=0,
             )
-
     if page == "داشبورد":
         page_dashboard()
     elif page == "شرکت‌ها":
