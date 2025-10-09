@@ -340,7 +340,7 @@ def login_view():
             info = auth_check(u, p)
             if info:
                 st.session_state.auth = info
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("نام کاربری یا رمز صحیح نیست.")
 
