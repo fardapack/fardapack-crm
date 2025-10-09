@@ -29,21 +29,21 @@ from typing import List, Tuple, Optional, Dict
 import pandas as pd
 import streamlit as st
 import hashlib
-# ---------- صفحه و استایل کلی ----------
+# ---------- تنظیمات صفحه و استایل راست‌چین ----------
 st.set_page_config(page_title="FardaPack Mini-CRM", page_icon="📇", layout="wide")
 
-# استایل راست‌چین برای کل برنامه و جدول‌ها
+# استایل کلی راست‌چین برای همهٔ جدول‌ها و اجزای فارسی
 st.markdown(
     """
     <style>
-    /* راست‌چین کردن کل اپ */
+    /* راست‌چین کردن کل برنامه */
     html, body, [data-testid="stAppViewContainer"] {
         direction: rtl;
         text-align: right !important;
         font-family: "Vazirmatn", sans-serif;
     }
 
-    /* جدول‌های استریم‌لیت (st.dataframe) */
+    /* جدول‌های داده (st.dataframe) */
     [data-testid="stDataFrame"] div[role="gridcell"],
     [data-testid="stDataFrame"] div[role="columnheader"] {
         text-align: right !important;
@@ -56,18 +56,22 @@ st.markdown(
         direction: rtl;
         width: 100%;
     }
+
     [data-testid="stTable"] th, [data-testid="stTable"] td {
         text-align: right !important;
         direction: rtl;
     }
 
-    /* تنظیم فاصله‌ی جدول از کناره‌ها */
+    /* فاصله جدول از کناره‌ها */
     [data-testid="stDataFrame"] {
         margin-right: 10px;
     }
 
-    /* عنوان‌ها و برچسب‌ها */
-    .stSelectbox label, .stTextInput label, .stTextArea label, .stTimeInput label {
+    /* ظاهر بهتر برای لیبل‌های فرم */
+    .stSelectbox label,
+    .stTextInput label,
+    .stTextArea label,
+    .stTimeInput label {
         font-weight: 600;
     }
     </style>
