@@ -648,7 +648,7 @@ def page_followups():
     changed = changed[changed["وضعیت_new"] != changed["وضعیت_old"]]
     if not changed.empty:
         for _, row in changed.iterrows():
-            update_followup_status(int(row["task_id"]), str(row["وضعیت_new"])))
+            update_followup_status(int(row["task_id"]), str(row["وضعیت_new"]))
         st.success("وضعیت‌های تغییر یافته ذخیره شد. برای دیدن آخرین وضعیت صفحه را رفرش کنید.")
 
 def render_user_profile(user_id: int):
