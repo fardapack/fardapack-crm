@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-FardaPack Mini-CRM — Streamlit + SQLite (چندکاربره سبک)
--------------------------------------------------------
+FardaPack Mini-CRM — Streamlit + SQLite (چندکاربره سبک) — نسخه با تاریخ شمسی و فرم‌های تاشونده
+--------------------------------------------------------------------------------------------
 
 ✦ امکانات:
 - ثبت شرکت، کاربر (رابط)، تماس، پیگیری
@@ -9,6 +9,8 @@ FardaPack Mini-CRM — Streamlit + SQLite (چندکاربره سبک)
 - ورود (لاگین) با نقش‌های «مدیر / بازاریاب»
   • بازاریاب فقط داده‌های لینک‌شده به خودش را می‌بیند
   • مدیر همه‌چیز را می‌بیند و کاربر ورود می‌سازد
+- تاریخ‌های «ورودی/فیلتر» به صورت **شمسی** (YYYY/MM/DD) با تبدیل خودکار به میلادی
+- فرم‌ها به صورت **expander** (با کلیک باز می‌شوند) و لیست‌ها به‌صورت پیش‌فرض نمایش داده می‌شوند
 
 ✦ اجرا محلی:
     pip install -r requirements.txt
@@ -17,6 +19,7 @@ FardaPack Mini-CRM — Streamlit + SQLite (چندکاربره سبک)
 ✦ نکات:
 - پایگاه‌داده: crm.db کنار فایل ایجاد می‌شود (WAL برای همزمانی سبک)
 - ورود پیش‌فرض (پس از اولین اجرا سریع عوض کنید): admin / admin123
+- برای تاریخ شمسی باید در requirements.txt سطر زیر باشد: **persiantools**
 """
 
 import sqlite3
@@ -26,6 +29,12 @@ from typing import List, Tuple, Optional, Dict
 import pandas as pd
 import streamlit as st
 import hashlib
+
+# تاریخ شمسی
+try:
+    from persiantools.jdatetime import JalaliDate
+except Exception:
+    JalaliDate = None  # اگر پکیج نصب نباشد، پیام راهنما می‌دهیم
 
 # ---------------------------
 #  تنظیمات اولیه UI
@@ -40,6 +49,40 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+# ---------------------------
+#  کمکی: تاریخ شمسی <-> میلادی
+# ---------------------------
+
+def _jalali_supported() -> bool:
+    return JalaliDate is not None
+
+
+def today_jalali_str() -> str:
+    if _jalali_supported():
+        return JalaliDate.today().strftime("%Y/%m/%d")
+    return ""
+
+
+def jalali_str_to_date(s: str) -> Optional[date]:
+    """ورودی: 'YYYY/MM/DD' => خروجی: datetime.date میلادی"""
+    if not s:
+        return None
+    if not _jalali_supported():
+        return None
+    try:
+        g = JalaliDate.strptime(s.strip(), "%Y/%m/%d").to_gregorian()
+        return date(g.year, g.month, g.day)
+    except Exception:
+        return None
+
+
+def date_to_jalali_str(d: date) -> str:
+    if not d or not _jalali_supported():
+        return ""
+    j = JalaliDate.fromgregorian(date=d)
+    return j.strftime("%Y/%m/%d")
+
 
 # ---------------------------
 #  پایگاه‌داده
@@ -205,123 +248,26 @@ def create_followup(user_id: int, title: str, details: str, due_date_val: date, 
     conn.commit()
     conn.close()
 
-# احراز هویت
-
-def auth_check(username: str, password: str) -> Optional[Dict]:
-    conn = get_conn()
-    row = conn.execute(
-        "SELECT id, username, password_sha256, role, linked_user_id FROM app_users WHERE username=?;",
-        (username.strip(),),
-    ).fetchone()
-    conn.close()
-    if not row:
-        return None
-    uid, uname, pwh, role, linked_user_id = row
-    if sha256(password) == pwh:
-        return {"id": uid, "username": uname, "role": role, "linked_user_id": linked_user_id}
-    return None
-
-def create_app_user(username: str, password: str, role: str, linked_user_id: Optional[int]):
-    conn = get_conn()
-    conn.execute(
-        "INSERT INTO app_users (username, password_sha256, role, linked_user_id) VALUES (?,?,?,?);",
-        (username.strip(), sha256(password), role, linked_user_id),
-    )
-    conn.commit()
-    conn.close()
-
-# کوئری‌های DataFrame با فیلتر
-
-def df_calls_filtered(name_query: str, statuses: List[str], start: Optional[date], end: Optional[date], only_user_id: Optional[int]=None) -> pd.DataFrame:
-    conn = get_conn()
-    params = []
-    where = ["1=1"]
-
-    if name_query:
-        where.append("(u.full_name LIKE ? OR c.name LIKE ?)")
-        q = f"%{name_query.strip()}%"
-        params.extend([q, q])
-
-    if statuses:
-        where.append("cl.status IN (" + ",".join(["?"] * len(statuses)) + ")")
-        params.extend(statuses)
-
-    if start:
-        where.append("date(cl.call_datetime) >= ?")
-        params.append(start.isoformat())
-    if end:
-        where.append("date(cl.call_datetime) <= ?")
-        params.append(end.isoformat())
-
-    if only_user_id:
-        where.append("u.id = ?")
-        params.append(only_user_id)
-
-    sql = f"""
-        SELECT cl.id AS call_id,
-               u.full_name AS نام_کاربر,
-               COALESCE(c.name, '') AS شرکت,
-               cl.call_datetime AS تاریخ_و_زمان,
-               cl.status AS وضعیت,
-               COALESCE(cl.description, '') AS توضیحات
-        FROM calls cl
-        JOIN users u ON u.id = cl.user_id
-        LEFT JOIN companies c ON c.id = u.company_id
-        WHERE {' AND '.join(where)}
-        ORDER BY cl.call_datetime DESC, cl.id DESC;
-    """
-    df = pd.read_sql_query(sql, conn, params=params)
-    conn.close()
-    return df
-
-def df_followups_filtered(name_query: str, statuses: List[str], start: Optional[date], end: Optional[date], only_user_id: Optional[int]=None) -> pd.DataFrame:
-    conn = get_conn()
-    params = []
-    where = ["1=1"]
-
-    if name_query:
-        where.append("(u.full_name LIKE ? OR c.name LIKE ?)")
-        q = f"%{name_query.strip()}%"
-        params.extend([q, q])
-
-    if statuses:
-        where.append("f.status IN (" + ",".join(["?"] * len(statuses)) + ")")
-        params.extend(statuses)
-
-    if start:
-        where.append("date(f.due_date) >= ?")
-        params.append(start.isoformat())
-    if end:
-        where.append("date(f.due_date) <= ?")
-        params.append(end.isoformat())
-
-    if only_user_id:
-        where.append("u.id = ?")
-        params.append(only_user_id)
-
-    sql = f"""
-        SELECT f.id AS task_id,
-               u.full_name AS نام_کاربر,
-               COALESCE(c.name, '') AS شرکت,
-               f.title AS عنوان,
-               COALESCE(f.details, '') AS توضیحات,
-               f.due_date AS تاریخ_پیگیری,
-               f.status AS وضعیت
-        FROM followups f
-        JOIN users u ON u.id = f.user_id
-        LEFT JOIN companies c ON c.id = u.company_id
-        WHERE {' AND '.join(where)}
-        ORDER BY f.due_date ASC, f.id DESC;
-    """
-    df = pd.read_sql_query(sql, conn, params=params)
-    conn.close()
-    return df
-
 def mark_followup_done(task_id: int):
     conn = get_conn()
     conn.execute("UPDATE followups SET status = 'پایان یافته' WHERE id = ?;", (task_id,))
     conn.commit()
     conn.close()
+
+# جدول راست‌چین با ستون «ردیف» و جابجایی ID جلو
+
+def render_df(df: pd.DataFrame):
+    if df is None or df.empty:
+        st.info("داده‌ای یافت نشد.")
+        return
+    df_disp = df.copy()
+    df_disp.insert(0, "ردیف", range(1, len(df_disp)+1))
+    cols = df_disp.columns.tolist()
+    id_cols = [c for c in cols if c in ["ID","call_id","task_id"]]
+    other_cols = [c for c in cols if c not in id_cols and c != "ردیف"]
+    new_cols = ["ردیف"] + id_cols + other_cols
+    df_disp = df_disp[new_cols]
+    st.dataframe(df_disp, use_container_width=True)
 
 # ---------------------------
 #  UI + Auth
@@ -331,7 +277,9 @@ if "auth" not in st.session_state:
 
 
 def login_view():
-    st.title("ورود به FardaPack Mini-CRM")
+    st.title("به FardaPack Mini-CRM ورود")
+    if not _jalali_supported():
+        st.info("برای تاریخ شمسی، در requirements.txt سطر زیر را اضافه کنید و دوباره دیپلوی کنید: persiantools")
     with st.form("login_form"):
         u = st.text_input("نام کاربری")
         p = st.text_input("رمز عبور", type="password")
@@ -379,23 +327,26 @@ def page_companies():
         st.info("این بخش فقط برای مدیر در دسترس است.")
         return
     st.subheader("ثبت و مدیریت شرکت‌ها")
-    with st.form("company_form", clear_on_submit=True):
-        name = st.text_input("نام شرکت *")
-        phone = st.text_input("تلفن")
-        address = st.text_area("آدرس")
-        note = st.text_area("یادداشت")
-        submitted = st.form_submit_button("ثبت شرکت")
-        if submitted:
-            if not name.strip():
-                st.warning("نام شرکت اجباری است.")
-            else:
-                create_company(name, phone, address, note)
-                st.success(f"شرکت «{name}» ثبت شد.")
+
+    with st.expander("➕ افزودن شرکت", expanded=False):
+        with st.form("company_form", clear_on_submit=True):
+            name = st.text_input("نام شرکت *")
+            phone = st.text_input("تلفن")
+            address = st.text_area("آدرس")
+            note = st.text_area("یادداشت")
+            submitted = st.form_submit_button("ثبت شرکت")
+            if submitted:
+                if not name.strip():
+                    st.warning("نام شرکت اجباری است.")
+                else:
+                    create_company(name, phone, address, note)
+                    st.success(f"شرکت «{name}» ثبت شد.")
+
     st.divider()
     rows = list_companies()
     if rows:
-        df = pd.DataFrame(rows, columns=["ID", "نام شرکت"]).set_index("ID")
-        st.dataframe(df, use_container_width=True)
+        df = pd.DataFrame(rows, columns=["ID", "نام شرکت"]).set_index("ID").reset_index()
+        render_df(df)
     else:
         st.info("شرکتی ثبت نشده است.")
 
@@ -405,23 +356,27 @@ def page_users():
         st.info("این بخش فقط برای مدیر در دسترس است.")
         return
     st.subheader("ثبت و مدیریت کاربران (رابط‌ها)")
+
     companies = list_companies()
     company_options = {"— بدون شرکت —": None}
     for cid, cname in companies:
         company_options[cname] = cid
-    with st.form("user_form", clear_on_submit=True):
-        full_name = st.text_input("نام و نام‌خانوادگی *")
-        phone = st.text_input("تلفن")
-        role = st.text_input("سمت/نقش")
-        company_name = st.selectbox("شرکت", list(company_options.keys()))
-        note = st.text_area("یادداشت")
-        submitted = st.form_submit_button("ثبت کاربر")
-        if submitted:
-            if not full_name.strip():
-                st.warning("نام کاربر اجباری است.")
-            else:
-                create_user(full_name, phone, role, company_options[company_name], note)
-                st.success(f"کاربر «{full_name}» ثبت شد.")
+
+    with st.expander("➕ افزودن کاربر (رابط)", expanded=False):
+        with st.form("user_form", clear_on_submit=True):
+            full_name = st.text_input("نام و نام‌خانوادگی *")
+            phone = st.text_input("تلفن")
+            role = st.text_input("سمت/نقش")
+            company_name = st.selectbox("شرکت", list(company_options.keys()))
+            note = st.text_area("یادداشت")
+            submitted = st.form_submit_button("ثبت کاربر")
+            if submitted:
+                if not full_name.strip():
+                    st.warning("نام کاربر اجباری است.")
+                else:
+                    create_user(full_name, phone, role, company_options[company_name], note)
+                    st.success(f"کاربر «{full_name}» ثبت شد.")
+
     st.divider()
     rows = list_users()
     if rows:
@@ -439,9 +394,9 @@ def page_users():
             ORDER BY u.full_name COLLATE NOCASE;
             """,
             conn,
-        ).set_index("ID")
+        )
         conn.close()
-        st.dataframe(df, use_container_width=True)
+        render_df(df)
     else:
         st.info("کاربری ثبت نشده است.")
 
@@ -463,19 +418,24 @@ def page_calls():
     if not user_map:
         st.warning("ابتدا مدیر باید شما را به یک 'کاربر (رابط)' لینک کند.")
         return
-    with st.form("call_form", clear_on_submit=True):
-        user_label = st.selectbox("کاربر *", list(user_map.keys()))
-        today = date.today()
-        now_hm = datetime.now().time().replace(second=0, microsecond=0)
-        d = st.date_input("تاریخ تماس *", today)
-        t = st.time_input("زمان تماس *", now_hm)
-        status = st.selectbox("وضعیت تماس *", CALL_STATUSES)
-        desc = st.text_area("توضیحات")
-        submitted = st.form_submit_button("ثبت تماس")
-        if submitted:
-            call_dt = datetime.combine(d, t)
-            create_call(user_map[user_label], call_dt, status, desc)
-            st.success("تماس ثبت شد.")
+
+    with st.expander("➕ افزودن تماس", expanded=False):
+        with st.form("call_form", clear_on_submit=True):
+            user_label = st.selectbox("کاربر *", list(user_map.keys()))
+            j_date = st.text_input("تاریخ تماس (شمسی YYYY/MM/DD) *", value=today_jalali_str(), placeholder="مثلاً 1403/07/18")
+            t = st.time_input("زمان تماس *", datetime.now().time().replace(second=0, microsecond=0))
+            status = st.selectbox("وضعیت تماس *", CALL_STATUSES)
+            desc = st.text_area("توضیحات")
+            submitted = st.form_submit_button("ثبت تماس")
+            if submitted:
+                d = jalali_str_to_date(j_date)
+                if not d:
+                    st.warning("فرمت تاریخ صحیح نیست. نمونه: 1403/07/18")
+                else:
+                    call_dt = datetime.combine(d, t)
+                    create_call(user_map[user_label], call_dt, status, desc)
+                    st.success("تماس ثبت شد.")
+
     st.divider()
     st.markdown("### فهرست تماس‌ها + فیلتر")
     c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
@@ -484,14 +444,16 @@ def page_calls():
     with c2:
         st_statuses = st.multiselect("فیلتر وضعیت", CALL_STATUSES, default=[])
     with c3:
-        start_date = st.date_input("از تاریخ", value=None)
+        start_j = st.text_input("از تاریخ (شمسی)", value="", placeholder="1403/01/01")
     with c4:
-        end_date = st.date_input("تا تاریخ", value=None)
+        end_j = st.text_input("تا تاریخ (شمسی)", value="", placeholder="1403/12/29")
+
+    start_date = jalali_str_to_date(start_j) if start_j else None
+    end_date = jalali_str_to_date(end_j) if end_j else None
+
     only_uid = None if st.session_state.auth["role"]=="admin" else st.session_state.auth.get("linked_user_id")
     df = df_calls_filtered(name_q, st_statuses, start_date, end_date, only_user_id=only_uid)
-    st.dataframe(df, use_container_width=True)
-    if not df.empty:
-        st.download_button("دانلود CSV تماس‌ها", df.to_csv(index=False).encode('utf-8-sig'), file_name="calls.csv", mime="text/csv")
+    render_df(df)
 
 
 def page_followups():
@@ -500,19 +462,26 @@ def page_followups():
     if not user_map:
         st.warning("ابتدا مدیر باید شما را به یک 'کاربر (رابط)' لینک کند.")
         return
-    with st.form("fu_form", clear_on_submit=True):
-        user_label = st.selectbox("کاربر *", list(user_map.keys()))
-        title = st.text_input("عنوان اقدام بعدی *", placeholder="مثلاً: ارسال پیش‌فاکتور")
-        details = st.text_area("جزئیات")
-        due = st.date_input("تاریخ پیگیری *", value=date.today() + timedelta(days=1))
-        status = st.selectbox("وضعیت", TASK_STATUSES, index=0)
-        submitted = st.form_submit_button("ثبت پیگیری")
-        if submitted:
-            if not title.strip():
-                st.warning("عنوان پیگیری اجباری است.")
-            else:
-                create_followup(user_map[user_label], title, details, due, status)
-                st.success("پیگیری ثبت شد.")
+
+    with st.expander("➕ افزودن پیگیری", expanded=False):
+        with st.form("fu_form", clear_on_submit=True):
+            user_label = st.selectbox("کاربر *", list(user_map.keys()))
+            title = st.text_input("عنوان اقدام بعدی *", placeholder="مثلاً: ارسال پیش‌فاکتور")
+            details = st.text_area("جزئیات")
+            j_due = st.text_input("تاریخ پیگیری (شمسی YYYY/MM/DD) *", value=today_jalali_str(), placeholder="1403/07/18")
+            status = st.selectbox("وضعیت", TASK_STATUSES, index=0)
+            submitted = st.form_submit_button("ثبت پیگیری")
+            if submitted:
+                if not title.strip():
+                    st.warning("عنوان پیگیری اجباری است.")
+                else:
+                    d = jalali_str_to_date(j_due)
+                    if not d:
+                        st.warning("فرمت تاریخ صحیح نیست. نمونه: 1403/07/18")
+                    else:
+                        create_followup(user_map[user_label], title, details, d, status)
+                        st.success("پیگیری ثبت شد.")
+
     st.divider()
     st.markdown("### فهرست پیگیری‌ها + فیلتر")
     c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
@@ -521,14 +490,17 @@ def page_followups():
     with c2:
         st_statuses = st.multiselect("فیلتر وضعیت", TASK_STATUSES, default=[], key="fu_st")
     with c3:
-        start_date = st.date_input("از تاریخ", value=None, key="fu_sd")
+        start_j = st.text_input("از تاریخ (شمسی)", value="", key="fu_sd", placeholder="1403/01/01")
     with c4:
-        end_date = st.date_input("تا تاریخ", value=None, key="fu_ed")
+        end_j = st.text_input("تا تاریخ (شمسی)", value="", key="fu_ed", placeholder="1403/12/29")
+
+    start_date = jalali_str_to_date(start_j) if start_j else None
+    end_date = jalali_str_to_date(end_j) if end_j else None
+
     only_uid = None if st.session_state.auth["role"]=="admin" else st.session_state.auth.get("linked_user_id")
     df = df_followups_filtered(name_q, st_statuses, start_date, end_date, only_user_id=only_uid)
-    st.dataframe(df, use_container_width=True)
-    if not df.empty:
-        st.download_button("دانلود CSV پیگیری‌ها", df.to_csv(index=False).encode('utf-8-sig'), file_name="followups.csv", mime="text/csv")
+    render_df(df)
+
     st.markdown("#### عملیات سریع")
     with st.form("done_form"):
         task_id = st.number_input("ID پیگیری برای اتمام", min_value=1, step=1)
@@ -550,23 +522,23 @@ def page_access_admin():
     map_users = {"— بدون لینک —": None}
     for u in all_users:
         map_users[f"{u[1]} (ID {u[0]})"] = u[0]
-    with st.form("new_app_user", clear_on_submit=True):
-        username = st.text_input("نام کاربری *")
-        password = st.text_input("رمز عبور *", type="password")
-        role = st.selectbox("نقش *", ["agent", "admin"], index=0)
-        link_label = st.selectbox("لینک به کدام 'کاربر (رابط)'؟", list(map_users.keys()))
-        submitted = st.form_submit_button("ایجاد کاربر ورود")
-        if submitted:
-            if not username or not password:
-                st.warning("نام کاربری و رمز عبور اجباری است.")
-            else:
-                try:
-                    create_app_user(username, password, role, map_users[link_label])
-                    st.success("کاربر ایجاد شد.")
-                except sqlite3.IntegrityError:
-                    st.error("این نام کاربری قبلاً وجود دارد.")
-    st.divider()
-    st.markdown("- برای بازاریاب‌ها نقش **agent** تنظیم و به یک 'کاربر (رابط)' لینک کنید.")
+
+    with st.expander("➕ ایجاد کاربر ورود", expanded=False):
+        with st.form("new_app_user", clear_on_submit=True):
+            username = st.text_input("نام کاربری *")
+            password = st.text_input("رمز عبور *", type="password")
+            role = st.selectbox("نقش *", ["agent", "admin"], index=0)
+            link_label = st.selectbox("لینک به کدام 'کاربر (رابط)'؟", list(map_users.keys()))
+            submitted = st.form_submit_button("ایجاد کاربر ورود")
+            if submitted:
+                if not username or not password:
+                    st.warning("نام کاربری و رمز عبور اجباری است.")
+                else:
+                    try:
+                        create_app_user(username, password, role, map_users[link_label])
+                        st.success("کاربر ایجاد شد.")
+                    except sqlite3.IntegrityError:
+                        st.error("این نام کاربری قبلاً وجود دارد.")
 
 # ---------------------------
 #  اجرای برنامه
