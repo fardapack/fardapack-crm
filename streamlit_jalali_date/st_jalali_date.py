@@ -1,38 +1,34 @@
+# -*- coding: utf-8 -*-
 import os
+from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 
-_COMPONENT_NAME = "streamlit_jalali_date"
-_parent = os.path.dirname(os.path.abspath(__file__))
-_build_dir = os.path.join(_parent, "frontend", "build")
+# مسیر فولدر build
+_build_dir = Path(__file__).parent / "frontend" / "build"
+_component_func = components.declare_component(
+    "jalali_date_input",
+    path=str(_build_dir),
+)
 
-if not os.path.exists(_build_dir):
-    raise RuntimeError(
-        "فولدر build برای کامپوننت پیدا نشد. باید در مسیر "
-        "`streamlit_jalali_date/frontend/build` کپی شود."
-    )
-
-_component = components.declare_component(_COMPONENT_NAME, path=_build_dir)
-
-def jalali_date_input(
-    label: str,
-    key: str = None,
-    value: str = "",
-    format: str = "YYYY/MM/DD",
-    min: str = None,
-    max: str = None,
-    disabled: bool = False,
-    placeholder: str = "",
-):
-    returned = _component(
+def jalali_date_input(label: str,
+                      value: str | None = None,
+                      key: str | None = None,
+                      placeholder: str = "",
+                      disabled: bool = False) -> str | None:
+    """
+    ورودی ساده‌ی تاریخ شمسی (فرمت: YYYY/MM/DD)
+    - label: لیبل فیلد
+    - value: مقدار اولیه (مثال '1403/07/18')
+    - placeholder: متن راهنما
+    - disabled: غیرفعال شدن فیلد
+    خروجی: رشته‌ی تاریخ شمسی یا None
+    """
+    return _component_func(
         label=label,
         value=value or "",
-        format=format,
-        min=min,
-        max=max,
-        disabled=disabled,
         placeholder=placeholder,
-        key=key,
+        disabled=bool(disabled),
         default=value or "",
+        key=key,
     )
-    return returned or ""
