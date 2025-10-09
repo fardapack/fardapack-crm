@@ -1,51 +1,44 @@
 # -*- coding: utf-8 -*-
 """
-FardaPack Mini-CRM — Streamlit + SQLite (چندکاربره سبک)
-نسخه با:
-- ورودی تاریخ شمسی با کامپوننت داخلی (forms + filters)
-- فونت Vazirmatn و راست‌چین
-- فرم‌های تاشونده (expander)
-- ویرایش وضعیت پیگیری داخل جدول (بدون فرم جدا)
-- نقش‌ها: مدیر / کارشناس فروش (agent)
-- محدودیت دید کارشناس فروش به رکوردهایی که خودش ثبت کرده
-- داشبورد: تماس‌های امروز + کاربران امروز + شمارش کلی
+FardaPack Mini-CRM — Streamlit + SQLite (بدون کامپوننت تاریخ؛ ورودی تاریخ‌ها دستی شمسی)
 """
 
-from __future__ import annotations
-
 import sqlite3
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import List, Tuple, Optional, Dict
 
 import pandas as pd
 import streamlit as st
 import hashlib
 
-# ====== UI: صفحه و فونت و RTL ======
+# ========= تنظیمات صفحه + استایل سراسری (فونت Vazirmatn و RTL) =========
 st.set_page_config(page_title="FardaPack Mini-CRM", page_icon="📇", layout="wide")
+
 st.markdown(
     """
     <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
-    html, body, [data-testid="stAppViewContainer"]{
-        direction: rtl !important;
+    html, body, [data-testid="stAppViewContainer"] {
+        direction: rtl;
         text-align: right !important;
         font-family: "Vazirmatn", sans-serif !important;
     }
-    [data-testid="stSidebar"] *{ font-family: "Vazirmatn", sans-serif !important; }
     [data-testid="stDataFrame"] div[role="gridcell"],
-    [data-testid="stDataFrame"] div[role="columnheader"]{
-        direction: rtl !important; text-align: right !important; justify-content: flex-end !important;
+    [data-testid="stDataFrame"] div[role="columnheader"] {
+        text-align: right !important;
+        direction: rtl !important;
+        justify-content: flex-end !important;
         font-family: "Vazirmatn", sans-serif !important;
     }
-    [data-testid="stTable"] table{ direction: rtl; }
-    label, .st-emotion-cache-16idsys p{ font-weight:600; }
+    [data-testid="stTable"] table { direction: rtl; width: 100%; }
+    [data-testid="stTable"] th, [data-testid="stTable"] td { text-align: right !important; }
+    .stSelectbox label, .stTextInput label, .stTextArea label, .stTimeInput label { font-weight: 600; }
     </style>
     """,
-    unsafe_allow_html=True,
+    unsafe_allow_html=True
 )
 
-# ====== تاریخ شمسی: persiantools ======
+# ========= تاریخ شمسی =========
 try:
     from persiantools.jdatetime import JalaliDate
 except Exception:
@@ -74,25 +67,25 @@ def date_to_jalali_str(d: date) -> str:
     except Exception:
         return ""
 
-# ====== ورودی شمسی (کامپوننت داخلی) ======
-# پوشه streamlit_jalali_date را طبق دستور ساخت فایل‌ها ایجاد کرده‌ای
-from streamlit_jalali_date import jalali_date_input
+# ========= تعطیلات =========
+HOLIDAYS_JALALI = set()  # اگر خواستی تاریخ‌های تعطیل را اینجا اضافه کن مثل "1403/01/01"
 
-# ====== تعطیلات (جمعه + امکان افزودن تاریخ‌های خاص) ======
-HOLIDAYS_JALALI = set()  # {"1403/01/01", ...}
 def is_holiday_gregorian(d: date) -> bool:
     try:
-        if d.weekday() == 4:  # Friday
+        if d.weekday() == 4:  # جمعه
             return True
     except Exception:
         pass
-    if _jalali_supported():
-        js = date_to_jalali_str(d)
-        if js and js in HOLIDAYS_JALALI:
-            return True
+    try:
+        if _jalali_supported():
+            js = date_to_jalali_str(d)
+            if js and js in HOLIDAYS_JALALI:
+                return True
+    except Exception:
+        pass
     return False
 
-# ====== پایگاه‌داده ======
+# ========= پایگاه‌داده =========
 DB_PATH = "crm.db"
 CALL_STATUSES = ["ناموفق", "موفق", "خاموش", "رد تماس"]
 TASK_STATUSES = ["در حال انجام", "پایان یافته"]
@@ -116,17 +109,18 @@ def init_db():
     cur = conn.cursor()
 
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS companies(
+        CREATE TABLE IF NOT EXISTS companies (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
-            phone TEXT, address TEXT, note TEXT,
+            phone TEXT,
+            address TEXT,
+            note TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             created_by INTEGER
         );
     """)
-
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS users(
+        CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             full_name TEXT NOT NULL,
             phone TEXT,
@@ -139,9 +133,8 @@ def init_db():
             FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE SET NULL
         );
     """)
-
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS calls(
+        CREATE TABLE IF NOT EXISTS calls (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             call_datetime TEXT NOT NULL,
@@ -152,9 +145,8 @@ def init_db():
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         );
     """)
-
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS followups(
+        CREATE TABLE IF NOT EXISTS followups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             title TEXT NOT NULL,
@@ -166,9 +158,8 @@ def init_db():
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         );
     """)
-
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS app_users(
+        CREATE TABLE IF NOT EXISTS app_users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password_sha256 TEXT NOT NULL,
@@ -179,19 +170,16 @@ def init_db():
         );
     """)
 
-    # migration columns
     for t in ("companies", "users", "calls", "followups"):
         if not _column_exists(conn, t, "created_by"):
             cur.execute(f"ALTER TABLE {t} ADD COLUMN created_by INTEGER;")
     if not _column_exists(conn, "users", "status"):
         cur.execute("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'بدون وضعیت';")
 
-    # indexes
     cur.execute("CREATE INDEX IF NOT EXISTS idx_users_company ON users(company_id);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_calls_user_datetime ON calls(user_id, call_datetime);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_followups_user_due ON followups(user_id, due_date);")
 
-    # default admin
     any_user = cur.execute("SELECT COUNT(*) FROM app_users;").fetchone()[0]
     if any_user == 0:
         cur.execute(
@@ -202,11 +190,11 @@ def init_db():
     conn.commit()
     conn.close()
 
-# ====== CRUD helpers ======
+# ========= CRUD/Queries =========
 def create_app_user(username: str, password: str, role: str, linked_user_id: Optional[int]):
     conn = get_conn()
     conn.execute(
-        "INSERT INTO app_users(username,password_sha256,role,linked_user_id) VALUES(?,?,?,?)",
+        "INSERT INTO app_users (username, password_sha256, role, linked_user_id) VALUES (?,?,?,?);",
         (username.strip(), sha256(password), role, linked_user_id),
     )
     conn.commit()
@@ -230,10 +218,10 @@ def list_companies(only_creator: Optional[int]) -> List[Tuple[int, str]]:
     conn = get_conn()
     if only_creator:
         rows = conn.execute(
-            "SELECT id,name FROM companies WHERE created_by=? ORDER BY name COLLATE NOCASE;", (only_creator,)
+            "SELECT id, name FROM companies WHERE created_by=? ORDER BY name COLLATE NOCASE;", (only_creator,)
         ).fetchall()
     else:
-        rows = conn.execute("SELECT id,name FROM companies ORDER BY name COLLATE NOCASE;").fetchall()
+        rows = conn.execute("SELECT id, name FROM companies ORDER BY name COLLATE NOCASE;").fetchall()
     conn.close()
     return rows
 
@@ -241,18 +229,20 @@ def list_users_basic(only_creator: Optional[int]) -> List[Tuple[int, str, Option
     conn = get_conn()
     if only_creator:
         rows = conn.execute(
-            "SELECT id,full_name,company_id FROM users WHERE created_by=? ORDER BY full_name COLLATE NOCASE;",
+            "SELECT id, full_name, company_id FROM users WHERE created_by=? ORDER BY full_name COLLATE NOCASE;",
             (only_creator,),
         ).fetchall()
     else:
-        rows = conn.execute("SELECT id,full_name,company_id FROM users ORDER BY full_name COLLATE NOCASE;").fetchall()
+        rows = conn.execute(
+            "SELECT id, full_name, company_id FROM users ORDER BY full_name COLLATE NOCASE;"
+        ).fetchall()
     conn.close()
     return rows
 
 def create_company(name: str, phone: str, address: str, note: str, creator_id: Optional[int]):
     conn = get_conn()
     conn.execute(
-        "INSERT INTO companies(name,phone,address,note,created_by) VALUES(?,?,?,?,?)",
+        "INSERT INTO companies (name, phone, address, note, created_by) VALUES (?,?,?,?,?);",
         (name.strip(), phone.strip(), address.strip(), note.strip(), creator_id),
     )
     conn.commit()
@@ -262,7 +252,7 @@ def create_user(full_name: str, phone: str, role: str, company_id: Optional[int]
                 status: str, creator_id: Optional[int]):
     conn = get_conn()
     conn.execute(
-        "INSERT INTO users(full_name,phone,role,company_id,note,status,created_by) VALUES(?,?,?,?,?,?,?)",
+        "INSERT INTO users (full_name, phone, role, company_id, note, status, created_by) VALUES (?,?,?,?,?,?,?);",
         (full_name.strip(), phone.strip(), role.strip(), company_id, note.strip(), status, creator_id),
     )
     conn.commit()
@@ -271,7 +261,7 @@ def create_user(full_name: str, phone: str, role: str, company_id: Optional[int]
 def create_call(user_id: int, call_dt: datetime, status: str, description: str, creator_id: Optional[int]):
     conn = get_conn()
     conn.execute(
-        "INSERT INTO calls(user_id,call_datetime,status,description,created_by) VALUES(?,?,?,?,?)",
+        "INSERT INTO calls (user_id, call_datetime, status, description, created_by) VALUES (?,?,?,?,?);",
         (user_id, call_dt.isoformat(timespec="minutes"), status, description.strip(), creator_id),
     )
     conn.commit()
@@ -280,7 +270,7 @@ def create_call(user_id: int, call_dt: datetime, status: str, description: str, 
 def create_followup(user_id: int, title: str, details: str, due_date_val: date, status: str, creator_id: Optional[int]):
     conn = get_conn()
     conn.execute(
-        "INSERT INTO followups(user_id,title,details,due_date,status,created_by) VALUES(?,?,?,?,?,?)",
+        "INSERT INTO followups (user_id, title, details, due_date, status, created_by) VALUES (?,?,?,?,?,?);",
         (user_id, title.strip(), details.strip(), due_date_val.isoformat(), status, creator_id),
     )
     conn.commit()
@@ -298,7 +288,7 @@ def update_user_status(user_id: int, new_status: str):
     conn.commit()
     conn.close()
 
-# ====== DataFrame Queries ======
+# ========= DataFrame helpers =========
 def df_calls_filtered(name_query: str, statuses: List[str], start: Optional[date], end: Optional[date],
                       only_user_id: Optional[int], only_creator: Optional[int]) -> pd.DataFrame:
     conn = get_conn()
@@ -415,7 +405,7 @@ def df_users_advanced(name_q: str, created_from: Optional[date], created_to: Opt
     conn.close()
     return df
 
-# ====== جدول راست‌چین ======
+# ========= رندر جدول =========
 def render_df(df: pd.DataFrame):
     if df is None or df.empty:
         st.info("داده‌ای یافت نشد."); return
@@ -426,10 +416,10 @@ def render_df(df: pd.DataFrame):
     other_cols = [c for c in cols if c not in id_cols and c != "ردیف"]
     ordered = ["ردیف"] + id_cols + other_cols
     df_disp = df_disp[ordered]
-    df_disp = df_disp[df_disp.columns[::-1]]
+    df_disp = df_disp[df_disp.columns[::-1]]  # از راست شروع شود
     st.dataframe(df_disp, use_container_width=True)
 
-# ====== Auth ======
+# ========= Auth & UI =========
 if "auth" not in st.session_state:
     st.session_state.auth = None
 
@@ -462,7 +452,7 @@ def header_userbox():
     st.markdown(f"**کاربر:** {a['username']} — **نقش:** {role_label(a['role'])}")
     st.button("خروج", on_click=lambda: st.session_state.update({"auth": None}))
 
-# ====== صفحات ======
+# ---------- داشبورد ----------
 def page_dashboard():
     st.subheader("داشبورد ساده")
     conn = get_conn()
@@ -478,6 +468,7 @@ def page_dashboard():
     c4.metric("تعداد کاربران", total_users)
     st.info("از منوی کناری می‌توانید شرکت/کاربر بسازید، تماس ثبت کنید و پیگیری‌ها را مدیریت کنید.")
 
+# ---------- شرکت‌ها ----------
 def page_companies():
     a = st.session_state.auth
     only_creator = None if a["role"]=="admin" else a["id"]
@@ -500,6 +491,7 @@ def page_companies():
     else:
         st.info("شرکتی ثبت نشده است.")
 
+# ---------- کاربران ----------
 def page_users():
     a = st.session_state.auth
     only_creator = None if a["role"]=="admin" else a["id"]
@@ -523,23 +515,19 @@ def page_users():
                     create_user(full_name, phone, role, company_options[company_name], note, user_status, current_user_id())
                     st.success(f"کاربر «{full_name}» ثبت شد.")
 
-    # فیلترها (همه شمسی)
+    # فیلترها (تاریخ‌ها دستی شمسی)
     st.markdown("### فیلتر کاربران")
     f1, f2, f3, f4, f5 = st.columns([2,2,2,2,2])
     with f1: name_q = st.text_input("نام")
-    with f2:
-        created_from_j = jalali_date_input("از تاریخ ایجاد (شمسی)", key="users_cf")
-    with f3:
-        created_to_j   = jalali_date_input("تا تاریخ ایجاد (شمسی)", key="users_ct")
+    with f2: created_from_j = st.text_input("از تاریخ ایجاد (شمسی) — مثلا 1403/01/01")
+    with f3: created_to_j   = st.text_input("تا تاریخ ایجاد (شمسی)")
     with f4:
         opt = st.selectbox("پیگیری باز دارد؟", ["— مهم نیست —", "بله", "خیر"], index=0)
         has_open = None if opt=="— مهم نیست —" else (True if opt=="بله" else False)
     with f5: pass
     g1, g2 = st.columns([2,2])
-    with g1:
-        last_call_from_j = jalali_date_input("از تاریخ آخرین تماس (شمسی)", key="users_lcf")
-    with g2:
-        last_call_to_j   = jalali_date_input("تا تاریخ آخرین تماس (شمسی)", key="users_lct")
+    with g1: last_call_from_j = st.text_input("از تاریخ آخرین تماس (شمسی)")
+    with g2: last_call_to_j   = st.text_input("تا تاریخ آخرین تماس (شمسی)")
 
     created_from = jalali_str_to_date(created_from_j) if created_from_j else None
     created_to   = jalali_str_to_date(created_to_j)   if created_to_j   else None
@@ -560,6 +548,7 @@ def page_users():
     else:
         st.info("هنوز کاربری ندارید.")
 
+# ---------- تماس‌ها ----------
 def page_calls():
     a = st.session_state.auth
     only_creator = None if a["role"]=="admin" else a["id"]
@@ -572,13 +561,13 @@ def page_calls():
     with st.expander("➕ افزودن تماس", expanded=False):
         with st.form("call_form", clear_on_submit=True):
             user_label = st.selectbox("کاربر *", list(user_map.keys()))
-            j_date = jalali_date_input("تاریخ تماس (شمسی YYYY/MM/DD) *", value=today_jalali_str(), key="call_date")
+            j_date = st.text_input("تاریخ تماس (شمسی YYYY/MM/DD) *", value=today_jalali_str())
             t = st.time_input("زمان تماس *", datetime.now().time().replace(second=0, microsecond=0))
             status = st.selectbox("وضعیت تماس *", CALL_STATUSES)
             desc = st.text_area("توضیحات")
             if st.form_submit_button("ثبت تماس"):
                 d = jalali_str_to_date(j_date)
-                if not d: st.warning("فرمت تاریخ صحیح نیست.")
+                if not d: st.warning("فرمت تاریخ صحیح نیست. نمونه: 1403/07/18")
                 else:
                     call_dt = datetime.combine(d, t)
                     create_call(user_map[user_label], call_dt, status, desc, current_user_id())
@@ -588,14 +577,15 @@ def page_calls():
     c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
     with c1: name_q = st.text_input("جستجو در نام کاربر/نام شرکت")
     with c2: st_statuses = st.multiselect("فیلتر وضعیت", CALL_STATUSES, default=[])
-    with c3: start_j = jalali_date_input("از تاریخ (شمسی)", key="calls_sd")
-    with c4: end_j   = jalali_date_input("تا تاریخ (شمسی)", key="calls_ed")
+    with c3: start_j = st.text_input("از تاریخ (شمسی)")
+    with c4: end_j = st.text_input("تا تاریخ (شمسی)")
     start_date = jalali_str_to_date(start_j) if start_j else None
     end_date   = jalali_str_to_date(end_j) if end_j else None
 
     df = df_calls_filtered(name_q, st_statuses, start_date, end_date, None, only_creator)
     render_df(df)
 
+# ---------- پیگیری‌ها ----------
 def page_followups():
     a = st.session_state.auth
     only_creator = None if a["role"]=="admin" else a["id"]
@@ -610,22 +600,26 @@ def page_followups():
             user_label = st.selectbox("کاربر *", list(user_map.keys()))
             title = st.text_input("عنوان اقدام بعدی *", placeholder="مثلاً: ارسال پیش‌فاکتور")
             details = st.text_area("جزئیات")
-            j_due = jalali_date_input("تاریخ پیگیری (شمسی YYYY/MM/DD) *", value=today_jalali_str(), key="fu_due")
+            j_due = st.text_input("تاریخ پیگیری (شمسی YYYY/MM/DD) *", value=today_jalali_str())
             if st.form_submit_button("ثبت پیگیری"):
-                d = jalali_str_to_date(j_due)
-                if not d: st.warning("فرمت تاریخ صحیح نیست.")
-                elif is_holiday_gregorian(d):
-                    st.error("تاریخ انتخابی تعطیل است. لطفاً روز کاری انتخاب کنید.")
+                if not title.strip():
+                    st.warning("عنوان پیگیری اجباری است.")
                 else:
-                    create_followup(user_map[user_label], title, details, d, "در حال انجام", current_user_id())
-                    st.success("پیگیری ثبت شد.")
+                    d = jalali_str_to_date(j_due)
+                    if not d:
+                        st.warning("فرمت تاریخ صحیح نیست. نمونه: 1403/07/18")
+                    elif is_holiday_gregorian(d):
+                        st.error("تاریخ انتخابی تعطیل است. لطفاً روز کاری انتخاب کنید.")
+                    else:
+                        create_followup(user_map[user_label], title, details, d, "در حال انجام", current_user_id())
+                        st.success("پیگیری ثبت شد.")
 
     st.markdown("### فهرست پیگیری‌ها + فیلتر")
     c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
     with c1: name_q = st.text_input("جستجو در نام کاربر/نام شرکت", key="fu_q")
     with c2: st_statuses = st.multiselect("فیلتر وضعیت", TASK_STATUSES, default=[], key="fu_st")
-    with c3: start_j = jalali_date_input("از تاریخ (شمسی)", key="fu_sd")
-    with c4: end_j   = jalali_date_input("تا تاریخ (شمسی)", key="fu_ed")
+    with c3: start_j = st.text_input("از تاریخ (شمسی)", key="fu_sd")
+    with c4: end_j   = st.text_input("تا تاریخ (شمسی)", key="fu_ed")
     start_date = jalali_str_to_date(start_j) if start_j else None
     end_date   = jalali_str_to_date(end_j) if end_j else None
 
@@ -636,21 +630,19 @@ def page_followups():
     # ویرایش وضعیت داخل جدول
     df_edit = df.copy()[df.columns[::-1]]
     cfg = {
-        "وضعیت": st.column_config.SelectboxColumn(
-            "وضعیت", help="برای تغییر وضعیت کلیک کنید", options=TASK_STATUSES, width="small"
-        )
+        "وضعیت": st.column_config.SelectboxColumn("وضعیت", options=TASK_STATUSES, width="small")
     }
     edited = st.data_editor(df_edit, use_container_width=True, column_config=cfg,
                             disabled=[c for c in df_edit.columns if c != "وضعیت"])
-
     changed = edited[["task_id","وضعیت"]].merge(df_edit[["task_id","وضعیت"]],
                                                on="task_id", suffixes=("_new","_old"))
     changed = changed[changed["وضعیت_new"] != changed["وضعیت_old"]]
     if not changed.empty:
         for _, row in changed.iterrows():
             update_followup_status(int(row["task_id"]), str(row["وضعیت_new"]))
-        st.success("وضعیت‌های تغییر یافته ذخیره شد. برای دیدن آخرین وضعیت صفحه را رفرش کنید.")
+        st.success("وضعیت‌های تغییر یافته ذخیره شد. برای دیدن نتیجه، صفحه را تازه کنید.")
 
+# ---------- پروفایل کاربر ----------
 def render_user_profile(user_id: int):
     conn = get_conn()
     info = conn.execute("""
@@ -698,7 +690,7 @@ def render_user_profile(user_id: int):
         render_df(df_peers)
     conn.close()
 
-# ====== اجرا ======
+# ---------- اجرای برنامه ----------
 init_db()
 
 if not st.session_state.auth:
@@ -713,16 +705,11 @@ else:
         else:
             page = st.radio("منو", ("داشبورد", "شرکت‌ها", "کاربران", "تماس‌ها", "پیگیری‌ها"), index=0)
 
-    if page == "داشبورد":
-        page_dashboard()
-    elif page == "شرکت‌ها":
-        page_companies()
-    elif page == "کاربران":
-        page_users()
-    elif page == "تماس‌ها":
-        page_calls()
-    elif page == "پیگیری‌ها":
-        page_followups()
+    if page == "داشبورد":         page_dashboard()
+    elif page == "شرکت‌ها":       page_companies()
+    elif page == "کاربران":       page_users()
+    elif page == "تماس‌ها":       page_calls()
+    elif page == "پیگیری‌ها":     page_followups()
     elif page == "مدیریت دسترسی":
         if st.session_state.auth["role"]=="admin":
             all_users = list_users_basic(None)
