@@ -79,7 +79,6 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-)
 # تاریخ شمسی
 try:
     from persiantools.jdatetime import JalaliDate
