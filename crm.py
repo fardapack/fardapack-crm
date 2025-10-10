@@ -835,12 +835,16 @@ def page_users():
             province = c5.text_input("استان")
             note = st.text_area("یادداشت")
             if st.form_submit_button("ثبت کاربر"):
-                if not (first_name or "").strip() or not (last_name or "").strip() or not (phone or "").strip():
-                    st.warning("نام، نام‌خانوادگی و تلفن اجباری هستند.")
-                else:
-                    ok, msg = create_user(first_name, last_name, phone, role, company_options[company_label], note,
-                                          user_status, domain, province, level, owner_map[owner_label], current_user_id())
-                    st.success(msg) if ok else st.error(msg)
+    if not (first_name or "").strip() or not (last_name or "").strip() or not (phone or "").strip():
+        st.warning("نام، نام‌خانوادگی و تلفن اجباری هستند.")
+    else:
+        ok, msg = create_user(first_name, last_name, phone, role, company_options[company_label], note,
+                              user_status, domain, province, level, owner_map[owner_label], current_user_id())
+        if ok:
+            st.toast("کاربر ثبت شد.", icon="✅")
+            st.rerun()   # جلوگیری از چاپ ناخواسته‌ی help/DeltaGenerator
+        else:
+            st.error(msg)
 
     # فیلترها
     st.markdown("### فیلتر کاربران")
