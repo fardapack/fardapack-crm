@@ -185,13 +185,13 @@ def init_db():
         );
     """)
 
-    # ایندکس‌ها
+    # Indexes
     cur.execute("CREATE INDEX IF NOT EXISTS idx_users_company ON users(company_id);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_users_owner ON users(owner_id);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_calls_user_datetime ON calls(user_id, call_datetime);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_followups_user_due ON followups(user_id, due_date);")
 
-    # کاربر مدیر اولیه
+    # Seed admin
     if cur.execute("SELECT COUNT(*) FROM app_users;").fetchone()[0] == 0:
         cur.execute("INSERT INTO app_users (username, password_sha256, role) VALUES (?,?,?);",
                     ("admin", sha256("admin123"), "admin"))
@@ -547,8 +547,10 @@ def dlg_edit_user(user_id: int):
                 phone=phone, role=role, company_id=comp_map[company_label], note=note_v,
                 status=status_v, domain=dom_v, province=prov_v, level=level_v, owner_id=owner_map[owner_label]
             )
-            st.success(msg) if ok else st.error(msg)
-            st.rerun()
+            if ok:
+                st.toast("ذخیره شد.", icon="💾"); st.rerun()
+            else:
+                st.error(msg)
 
 @st.dialog("ثبت تماس سریع")
 def dlg_quick_call(user_id: int):
@@ -563,7 +565,7 @@ def dlg_quick_call(user_id: int):
                 st.warning("فرمت تاریخ صحیح نیست.")
                 return
             create_call(user_id, datetime.combine(d, t), status, desc, current_user_id())
-            st.success("تماس ثبت شد.")
+            st.toast("تماس ثبت شد.", icon="✅")
 
 @st.dialog("ثبت پیگیری سریع")
 def dlg_quick_followup(user_id: int):
@@ -580,7 +582,7 @@ def dlg_quick_followup(user_id: int):
                 st.warning("فرمت تاریخ صحیح نیست.")
                 return
             create_followup(user_id, title, details, d, "در حال انجام", current_user_id())
-            st.success("پیگیری ثبت شد.")
+            st.toast("پیگیری ثبت شد.", icon="✅")
 
 # ====================== دیالوگ‌ها: شرکت‌ها ======================
 @st.dialog("پروفایل شرکت")
@@ -621,7 +623,7 @@ def dlg_company_view(company_id: int):
 
     with tabs[3]:
         dfu = pd.read_sql_query("""
-          SELECT f.id AS ID, u.full_name AS نام_کاربر, f.title AS عنوان, COALESCE(f.details,'') AS جزئیات, f.due_date AS تاریخ_پیگیری, f.status AS وضعیت
+          SELECT f.id AS ID, u.full_name AS نام_کاربر, f.title AS عنوان, COALESCE(f.details,'') AS جزئیات, f.due_date AS تاریخ‌_پیگیری, f.status AS وضعیت
           FROM followups f JOIN users u ON u.id=f.user_id
           WHERE u.company_id=? ORDER BY f.due_date DESC, f.id DESC;
         """, conn, params=(company_id,))
@@ -649,8 +651,10 @@ def dlg_company_edit(company_id: int):
         if st.form_submit_button("ذخیره"):
             ok, msg = update_company(company_id, name=name_v.strip(), phone=(phone_v or "").strip(), address=(addr_v or "").strip(),
                                      note=(note_v or "").strip(), level=level_v, status=status_v)
-            st.success(msg) if ok else st.error(msg)
-            st.rerun()
+            if ok:
+                st.toast("ذخیره شد.", icon="💾"); st.rerun()
+            else:
+                st.error(msg)
 
 @st.dialog("ثبت تماس برای شرکت")
 def dlg_company_quick_call(company_id: int):
@@ -673,7 +677,7 @@ def dlg_company_quick_call(company_id: int):
                 st.warning("فرمت تاریخ صحیح نیست.")
                 return
             create_call(options[user_label], datetime.combine(d, t), status, desc, current_user_id())
-            st.success("تماس ثبت شد.")
+            st.toast("تماس ثبت شد.", icon="✅")
 
 @st.dialog("ثبت پیگیری برای شرکت")
 def dlg_company_quick_fu(company_id: int):
@@ -698,7 +702,7 @@ def dlg_company_quick_fu(company_id: int):
                 st.warning("فرمت تاریخ صحیح نیست.")
                 return
             create_followup(options[user_label], title, details, d, "در حال انجام", current_user_id())
-            st.success("پیگیری ثبت شد.")
+            st.toast("پیگیری ثبت شد.", icon="✅")
 
 # ====================== صفحات ======================
 def page_dashboard():
@@ -725,22 +729,22 @@ def page_companies():
 
     # --- افزودن شرکت ---
     with st.expander("➕ افزودن شرکت", expanded=False):
-    with st.form("company_form", clear_on_submit=True):
-        name = st.text_input("نام شرکت *")
-        phone = st.text_input("تلفن")
-        address = st.text_area("آدرس")
-        note = st.text_area("یادداشت")
-        c1, c2 = st.columns(2)
-        level = c1.selectbox("سطح شرکت", LEVELS, index=0)
-        status = c2.selectbox("وضعیت شرکت", COMPANY_STATUSES, index=0)
+        with st.form("company_form", clear_on_submit=True):
+            name = st.text_input("نام شرکت *")
+            phone = st.text_input("تلفن")
+            address = st.text_area("آدرس")
+            note = st.text_area("یادداشت")
+            c1, c2 = st.columns(2)
+            level = c1.selectbox("سطح شرکت", LEVELS, index=0)
+            status = c2.selectbox("وضعیت شرکت", COMPANY_STATUSES, index=0)
 
-        if st.form_submit_button("ثبت شرکت"):
-            if not (name or "").strip():
-                st.warning("نام شرکت اجباری است.")
-            else:
-                create_company(name, phone, address, note, level, status, current_user_id())
-                st.toast(f"شرکت «{name}» ثبت شد.", icon="✅")
-                st.rerun()
+            if st.form_submit_button("ثبت شرکت"):
+                if not (name or "").strip():
+                    st.warning("نام شرکت اجباری است.")
+                else:
+                    create_company(name, phone, address, note, level, status, current_user_id())
+                    st.toast(f"شرکت «{name}» ثبت شد.", icon="✅")
+                    st.rerun()
 
     # --- فیلترها ---
     st.markdown("### فیلتر شرکت‌ها")
@@ -823,35 +827,35 @@ def page_users():
         owner_map[f"{u} ({r})"] = i
 
     with st.expander("➕ افزودن کاربر (رابط)", expanded=False):
-    with st.form("user_form", clear_on_submit=True):
-        c1, c2, c3 = st.columns(3)
-        first_name = c1.text_input("نام *")
-        last_name  = c2.text_input("نام خانوادگی *")
-        phone      = c3.text_input("تلفن (یکتا) *")
-        role = st.text_input("سمت/نقش")
-        company_label = st.selectbox("شرکت", list(company_options.keys()))
-        row1, row2, row3 = st.columns(3)
-        user_status = row1.selectbox("وضعیت کاربر", USER_STATUSES, index=0)
-        level = row2.selectbox("سطح کاربر", LEVELS, index=0)
-        owner_label = row3.selectbox("کارشناس فروش (شامل مدیر)", list(owner_map.keys()), index=0)
-        c4, c5 = st.columns(2)
-        domain = c4.text_input("حوزه فعالیت")
-        province = c5.text_input("استان")
-        note = st.text_area("یادداشت")
+        with st.form("user_form", clear_on_submit=True):
+            c1, c2, c3 = st.columns(3)
+            first_name = c1.text_input("نام *")
+            last_name  = c2.text_input("نام خانوادگی *")
+            phone      = c3.text_input("تلفن (یکتا) *")
+            role = st.text_input("سمت/نقش")
+            company_label = st.selectbox("شرکت", list(company_options.keys()))
+            row1, row2, row3 = st.columns(3)
+            user_status = row1.selectbox("وضعیت کاربر", USER_STATUSES, index=0)
+            level = row2.selectbox("سطح کاربر", LEVELS, index=0)
+            owner_label = row3.selectbox("کارشناس فروش (شامل مدیر)", list(owner_map.keys()), index=0)
+            c4, c5 = st.columns(2)
+            domain = c4.text_input("حوزه فعالیت")
+            province = c5.text_input("استان")
+            note = st.text_area("یادداشت")
 
-        if st.form_submit_button("ثبت کاربر"):
-            if not (first_name or "").strip() or not (last_name or "").strip() or not (phone or "").strip():
-                st.warning("نام، نام‌خانوادگی و تلفن اجباری هستند.")
-            else:
-                ok, msg = create_user(first_name, last_name, phone, role,
-                                      company_options[company_label], note,
-                                      user_status, domain, province, level,
-                                      owner_map[owner_label], current_user_id())
-                if ok:
-                    st.toast("کاربر ثبت شد.", icon="✅")
-                    st.rerun()
+            if st.form_submit_button("ثبت کاربر"):
+                if not (first_name or "").strip() or not (last_name or "").strip() or not (phone or "").strip():
+                    st.warning("نام، نام‌خانوادگی و تلفن اجباری هستند.")
                 else:
-                    st.error(msg)
+                    ok, msg = create_user(first_name, last_name, phone, role,
+                                          company_options[company_label], note,
+                                          user_status, domain, province, level,
+                                          owner_map[owner_label], current_user_id())
+                    if ok:
+                        st.toast("کاربر ثبت شد.", icon="✅")
+                        st.rerun()
+                    else:
+                        st.error(msg)
 
     # فیلترها
     st.markdown("### فیلتر کاربران")
@@ -949,7 +953,7 @@ def page_calls():
                         st.warning("فرمت تاریخ صحیح نیست.")
                     else:
                         create_call(user_map[user_label], datetime.combine(d, t), status, desc, current_user_id())
-                        st.success("تماس ثبت شد.")
+                        st.toast("تماس ثبت شد.", icon="✅")
     c1, c2, c3, c4 = st.columns(4)
     name_q = c1.text_input("جستجو نام/شرکت")
     st_statuses = c2.multiselect("وضعیت", CALL_STATUSES, default=[])
@@ -981,7 +985,7 @@ def page_followups():
                             st.warning("فرمت تاریخ صحیح نیست.")
                         else:
                             create_followup(user_map[user_label], title, details, d, "در حال انجام", current_user_id())
-                            st.success("پیگیری ثبت شد.")
+                            st.toast("پیگیری ثبت شد.", icon="✅")
     c1, c2, c3, c4 = st.columns(4)
     name_q = c1.text_input("جستجو نام/شرکت", key="fu_q")
     st_statuses = c2.multiselect("وضعیت", TASK_STATUSES, default=[], key="fu_st")
@@ -1014,7 +1018,7 @@ def page_access():
                         conn = get_conn()
                         conn.execute("INSERT INTO app_users (username,password_sha256,role,linked_user_id) VALUES (?,?,?,?);",
                                      ((username or "").strip(), sha256(password), role_sel, map_users[link_label]))
-                        conn.commit(); conn.close(); st.success("کاربر ایجاد شد.")
+                        conn.commit(); conn.close(); st.toast("کاربر ایجاد شد.", icon="✅"); st.rerun()
                     except sqlite3.IntegrityError:
                         st.error("این نام کاربری قبلاً وجود دارد.")
 
