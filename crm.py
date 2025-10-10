@@ -725,19 +725,22 @@ def page_companies():
 
     # --- افزودن شرکت ---
     with st.expander("➕ افزودن شرکت", expanded=False):
-        with st.form("company_form", clear_on_submit=True):
-            name = st.text_input("نام شرکت *"); phone = st.text_input("تلفن")
-            address = st.text_area("آدرس"); note = st.text_area("یادداشت")
-            c1, c2 = st.columns(2)
-            level = c1.selectbox("سطح شرکت", LEVELS, index=0)
-            status = c2.selectbox("وضعیت شرکت", COMPANY_STATUSES, index=0)
-            if st.form_submit_button("ثبت شرکت"):
-    if not (name or "").strip():
-        st.warning("نام شرکت اجباری است.")
-    else:
-        create_company(name, phone, address, note, level, status, current_user_id())
-        st.toast(f"شرکت «{name}» ثبت شد.", icon="✅")
-        st.rerun()
+    with st.form("company_form", clear_on_submit=True):
+        name = st.text_input("نام شرکت *")
+        phone = st.text_input("تلفن")
+        address = st.text_area("آدرس")
+        note = st.text_area("یادداشت")
+        c1, c2 = st.columns(2)
+        level = c1.selectbox("سطح شرکت", LEVELS, index=0)
+        status = c2.selectbox("وضعیت شرکت", COMPANY_STATUSES, index=0)
+
+        if st.form_submit_button("ثبت شرکت"):
+            if not (name or "").strip():
+                st.warning("نام شرکت اجباری است.")
+            else:
+                create_company(name, phone, address, note, level, status, current_user_id())
+                st.toast(f"شرکت «{name}» ثبت شد.", icon="✅")
+                st.rerun()
 
     # --- فیلترها ---
     st.markdown("### فیلتر شرکت‌ها")
