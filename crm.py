@@ -823,32 +823,35 @@ def page_users():
         owner_map[f"{u} ({r})"] = i
 
     with st.expander("➕ افزودن کاربر (رابط)", expanded=False):
-        with st.form("user_form", clear_on_submit=True):
-            c1, c2, c3 = st.columns(3)
-            first_name = c1.text_input("نام *")
-            last_name  = c2.text_input("نام خانوادگی *")
-            phone      = c3.text_input("تلفن (یکتا) *")
-            role = st.text_input("سمت/نقش")
-            company_label = st.selectbox("شرکت", list(company_options.keys()))
-            row1, row2, row3 = st.columns(3)
-            user_status = row1.selectbox("وضعیت کاربر", USER_STATUSES, index=0)
-            level = row2.selectbox("سطح کاربر", LEVELS, index=0)
-            owner_label = row3.selectbox("کارشناس فروش (شامل مدیر)", list(owner_map.keys()), index=0)
-            c4, c5 = st.columns(2)
-            domain = c4.text_input("حوزه فعالیت")
-            province = c5.text_input("استان")
-            note = st.text_area("یادداشت")
-            if st.form_submit_button("ثبت کاربر"):
-    if not (first_name or "").strip() or not (last_name or "").strip() or not (phone or "").strip():
-        st.warning("نام، نام‌خانوادگی و تلفن اجباری هستند.")
-    else:
-        ok, msg = create_user(first_name, last_name, phone, role, company_options[company_label], note,
-                              user_status, domain, province, level, owner_map[owner_label], current_user_id())
-        if ok:
-            st.toast("کاربر ثبت شد.", icon="✅")
-            st.rerun()   # جلوگیری از چاپ ناخواسته‌ی help/DeltaGenerator
-        else:
-            st.error(msg)
+    with st.form("user_form", clear_on_submit=True):
+        c1, c2, c3 = st.columns(3)
+        first_name = c1.text_input("نام *")
+        last_name  = c2.text_input("نام خانوادگی *")
+        phone      = c3.text_input("تلفن (یکتا) *")
+        role = st.text_input("سمت/نقش")
+        company_label = st.selectbox("شرکت", list(company_options.keys()))
+        row1, row2, row3 = st.columns(3)
+        user_status = row1.selectbox("وضعیت کاربر", USER_STATUSES, index=0)
+        level = row2.selectbox("سطح کاربر", LEVELS, index=0)
+        owner_label = row3.selectbox("کارشناس فروش (شامل مدیر)", list(owner_map.keys()), index=0)
+        c4, c5 = st.columns(2)
+        domain = c4.text_input("حوزه فعالیت")
+        province = c5.text_input("استان")
+        note = st.text_area("یادداشت")
+
+        if st.form_submit_button("ثبت کاربر"):
+            if not (first_name or "").strip() or not (last_name or "").strip() or not (phone or "").strip():
+                st.warning("نام، نام‌خانوادگی و تلفن اجباری هستند.")
+            else:
+                ok, msg = create_user(first_name, last_name, phone, role,
+                                      company_options[company_label], note,
+                                      user_status, domain, province, level,
+                                      owner_map[owner_label], current_user_id())
+                if ok:
+                    st.toast("کاربر ثبت شد.", icon="✅")
+                    st.rerun()
+                else:
+                    st.error(msg)
 
     # فیلترها
     st.markdown("### فیلتر کاربران")
