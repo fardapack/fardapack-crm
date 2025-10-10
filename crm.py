@@ -732,11 +732,12 @@ def page_companies():
             level = c1.selectbox("سطح شرکت", LEVELS, index=0)
             status = c2.selectbox("وضعیت شرکت", COMPANY_STATUSES, index=0)
             if st.form_submit_button("ثبت شرکت"):
-                if not (name or "").strip():
-                    st.warning("نام شرکت اجباری است.")
-                else:
-                    create_company(name, phone, address, note, level, status, current_user_id())
-                    st.success(f"شرکت «{name}» ثبت شد.")
+    if not (name or "").strip():
+        st.warning("نام شرکت اجباری است.")
+    else:
+        create_company(name, phone, address, note, level, status, current_user_id())
+        st.toast(f"شرکت «{name}» ثبت شد.", icon="✅")
+        st.rerun()
 
     # --- فیلترها ---
     st.markdown("### فیلتر شرکت‌ها")
