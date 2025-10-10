@@ -604,10 +604,11 @@ def page_users():
     last_call_to   = jalali_str_to_date(last_call_to_j) if last_call_to_j else None
     has_open = None if has_open_opt=="— مهم نیست —" else (True if has_open_opt=="بله" else False)
 
-    # --- دیتافریم نهایی با ترتیب ستون‌ها ---
-    df_all = df_users_advanced(first_q,last_q,created_from,created_to,has_open,last_call_from,last_call_to,h_stat,only_owner)
+       # --- دیتافریم نهایی با ترتیب ستون‌ها ---
+    df_all = df_users_advanced(first_q,last_q,created_from,created_to,has_open,
+                               last_call_from,last_call_to,h_stat,only_owner)
 
-    # نگاشت امن user_id (Hidden)
+    # نگاشت امن user_id
     conn = get_conn()
     id_map = pd.read_sql_query("SELECT id, full_name FROM users;", conn)
     conn.close()
@@ -615,50 +616,61 @@ def page_users():
     df_all["user_id"] = df_all["نام_کامل"].map(name_to_id)
 
     # ترتیب خواسته‌شده
-    ordered = ["نام","نام_خانوادگی","شرکت","تلفن","وضعیت_کاربر","سطح_کاربر","آخرین_تماس","حوزه_فعالیت","استان","پیگیری_باز_دارد"]
+    ordered = ["نام","نام_خانوادگی","شرکت","تلفن","وضعیت_کاربر",
+               "سطح_کاربر","آخرین_تماس","حوزه_فعالیت","استان","پیگیری_باز_دارد"]
     ordered = [c for c in ordered if c in df_all.columns]
 
-    base = df_all[ordered + ["user_id","نام_کامل"]].copy()
-    # اکشن‌ها
+    # دیتافریم نمایشی (نام_کامل را نمایش نمی‌دهیم)
+    base = df_all[ordered + ["user_id", "نام_کامل"]].copy()
+
+    # ستون‌های اقدام داخل جدول (CheckboxColumn)
     base["👁 نمایش"] = False
     base["✏ ویرایش"] = False
     base["📞 تماس"]  = False
     base["🗓️ پیگیری"] = False
 
+    # user_id را به عنوان index می‌گذاریم تا «مخفی» شود (با hide_index=True)
+    base = base.set_index("user_id", drop=True)
+
+    # فقط همین ستون‌ها نمایش داده شوند (بدون user_id و بدون نام_کامل)
+    display_cols = ordered + ["👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]
+
     colcfg = {
-        "👁 نمایش": st.column_config.CheckboxColumn("نمایش", help="نمایش پروفایل", width="small"),
+        "👁 نمایش":  st.column_config.CheckboxColumn("نمایش", help="نمایش پروفایل", width="small"),
         "✏ ویرایش": st.column_config.CheckboxColumn("ویرایش", help="ویرایش پروفایل", width="small"),
-        "📞 تماس":  st.column_config.CheckboxColumn("تماس", help="ثبت تماس", width="small"),
+        "📞 تماس":   st.column_config.CheckboxColumn("تماس", help="ثبت تماس", width="small"),
         "🗓️ پیگیری": st.column_config.CheckboxColumn("پیگیری", help="ثبت پیگیری", width="small"),
-        "user_id": st.column_config.Column("user_id", width="small", disabled=True, hidden=True),
-        "نام_کامل": st.column_config.Column("نام_کامل", disabled=True, hidden=True),
     }
 
     editable_cols = ["👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]
     edited = st.data_editor(
         base,
         use_container_width=True,
-        hide_index=True,
+        hide_index=True,                 # index همان user_id است و نمایش داده نمی‌شود
+        column_order=display_cols,       # چه ستون‌هایی نشان داده شوند
         column_config=colcfg,
-        disabled=[c for c in base.columns if c not in editable_cols],
+        disabled=[c for c in display_cols if c in ordered],  # فقط ستون‌های اقدام قابل تغییر
         key="users_editor"
     )
 
-    # کلیک‌ها: هر ردیفی که هرکدام True شده
+    # ردیف‌هایی که هرکدام از اکشن‌ها True شده‌اند
     if not edited.empty:
-        act_cols = ["👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]
-        clicked_rows = edited[(edited[act_cols].astype(bool)).any(axis=1)]
-        if not clicked_rows.empty:
-            for _, r in clicked_rows.iterrows():
-                uid = int(r["user_id"]) if pd.notna(r["user_id"]) else None
-                if not uid: continue
-                if r["👁 نمایش"]:   dlg_profile(uid)
-                elif r["✏ ویرایش"]: dlg_edit_user(uid)
-                elif r["📞 تماس"]:   dlg_quick_call(uid)
-                elif r["🗓️ پیگیری"]: dlg_quick_followup(uid)
-            # ریست اکشن‌ها
-            st.session_state["users_editor"] = base
-            st.rerun()
+        # چون user_id در index است، از index برای شناسایی ردیف استفاده می‌کنیم
+        # هر اکشنی True شد، همان first match را باز می‌کنیم
+        for uid, row in edited.iterrows():
+            if bool(row.get("👁 نمایش", False)):
+                dlg_profile(int(uid))
+            elif bool(row.get("✏ ویرایش", False)):
+                dlg_edit_user(int(uid))
+            elif bool(row.get("📞 تماس", False)):
+                dlg_quick_call(int(uid))
+            elif bool(row.get("🗓️ پیگیری", False)):
+                dlg_quick_followup(int(uid))
+        # ریست کردن تیک‌ها
+        base.loc[:, ["👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]] = False
+        st.session_state["users_editor"] = base
+        st.rerun()
+
 
 def page_calls():
     only_owner = None if is_admin() else current_user_id()
