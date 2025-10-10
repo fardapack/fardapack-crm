@@ -1,16 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 FardaPack Mini-CRM — Streamlit + SQLite
-- فونت Vazirmatn + هدر بولد و RTL کامل
-- جدول کاربران از راست: نام، نام خانوادگی، ...
-- ستون «نام کامل» از جدول مخفی (فقط دیتابیس)
-- دکمه‌های واقعی استریم‌لیت برای نمایش/ویرایش/افزودن تماس/پیگیری (پاپ‌آپ در همان صفحه)
-- جلوگیری از شماره تکراری
-- مالکیت کاربر (owner_id) → کارشناس فقط کاربران خودش را می‌بیند؛ مدیر همه را
 """
 
 import sqlite3
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import List, Tuple, Optional, Dict
 
 import pandas as pd
@@ -19,39 +13,38 @@ import hashlib
 
 # ================== صفحه و استایل ==================
 st.set_page_config(page_title="FardaPack Mini-CRM", page_icon="📇", layout="wide")
-st.markdown(
-    """
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;600;700&display=swap" rel="stylesheet">
-    <style>
-    html, body, [data-testid="stAppViewContainer"] {
-        direction: rtl;
-        text-align: right !important;
-        font-family: "Vazirmatn", sans-serif !important;
-    }
-    [data-testid="stSidebar"] * { font-family: "Vazirmatn", sans-serif !important; }
 
-    /* هم برای DataFrame و هم DataEditor */
-    [data-testid="stDataFrame"], [data-testid="stDataEditor"] { direction: rtl !important; }
-    [data-testid="stDataFrame"] div[role="gridcell"],
-    [data-testid="stDataFrame"] div[role="columnheader"],
-    [data-testid="stDataEditor"] div[role="gridcell"],
-    [data-testid="stDataEditor"] div[role="columnheader"]{
-        text-align: right !important;
-        direction: rtl !important;
-        justify-content: flex-end !important;
-        font-family: "Vazirmatn", sans-serif !important;
-    }
-    /* هدر بولد */
-    [data-testid="stDataFrame"] div[role="columnheader"],
-    [data-testid="stDataEditor"] div[role="columnheader"]{
-        font-weight: 700 !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+# استایل: RTL + فونت Vazirmatn + هدر بولد (بدون رندر متن اضافه)
+st.markdown("""
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+  html, body, [data-testid="stAppViewContainer"]{
+    direction: rtl;
+    text-align: right !important;
+    font-family: "Vazirmatn", sans-serif !important;
+  }
+  [data-testid="stSidebar"] *{
+    font-family: "Vazirmatn", sans-serif !important;
+  }
+  /* هر دو جدول */
+  [data-testid="stDataFrame"], [data-testid="stDataEditor"]{ direction: rtl !important; }
+  [data-testid="stDataFrame"] div[role="gridcell"],
+  [data-testid="stDataFrame"] div[role="columnheader"],
+  [data-testid="stDataEditor"] div[role="gridcell"],
+  [data-testid="stDataEditor"] div[role="columnheader"]{
+    text-align: right !important;
+    direction: rtl !important;
+    justify-content: flex-end !important;
+    font-family: "Vazirmatn", sans-serif !important;
+  }
+  [data-testid="stDataFrame"] div[role="columnheader"],
+  [data-testid="stDataEditor"] div[role="columnheader"]{
+    font-weight: 700 !important;
+  }
+</style>
+""", unsafe_allow_html=True)
 
 # ================== تاریخ شمسی ==================
 try:
@@ -79,24 +72,6 @@ def date_to_jalali_str(d: date) -> str:
         return JalaliDate.fromgregorian(date=d).strftime("%Y/%m/%d")
     except Exception:
         return ""
-
-# ================== تعطیلات ==================
-HOLIDAYS_JALALI = set()
-
-def is_holiday_gregorian(d: date) -> bool:
-    try:
-        if d.weekday() == 4:  # جمعه
-            return True
-    except Exception:
-        pass
-    try:
-        if _jalali_supported():
-            js = date_to_jalali_str(d)
-            if js and js in HOLIDAYS_JALALI:
-                return True
-    except Exception:
-        pass
-    return False
 
 # ================== ثابت‌ها/DB ==================
 DB_PATH = "crm.db"
@@ -147,7 +122,7 @@ def init_db():
             domain TEXT,
             province TEXT,
             level TEXT NOT NULL DEFAULT 'هیچکدام',
-            owner_id INTEGER, -- app_users.id
+            owner_id INTEGER,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             created_by INTEGER,
             FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE SET NULL
@@ -190,6 +165,7 @@ def init_db():
         );
     """)
 
+    # ارتقا
     if not _column_exists(conn, "companies", "level"):
         cur.execute("ALTER TABLE companies ADD COLUMN level TEXT NOT NULL DEFAULT 'هیچکدام';")
     for t in ("companies","users","calls","followups"):
@@ -212,7 +188,7 @@ def init_db():
                     ("admin", sha256("admin123"), "admin"))
     conn.commit(); conn.close()
 
-# ====== Helper: لیست‌ها/CRUD ======
+# ====== Helper/CRUD ======
 def list_companies(_: Optional[int]) -> List[Tuple[int, str]]:
     conn = get_conn()
     rows = conn.execute("SELECT id, name FROM companies ORDER BY name COLLATE NOCASE;").fetchall()
@@ -259,7 +235,7 @@ def create_user(first_name, last_name, phone, job_role, company_id, note,
     conn.commit(); conn.close(); return True, "کاربر ثبت شد."
 
 def update_user(user_id: int, **fields):
-    if "phone" in fields and fields["phone"] and phone_exists(fields["phone"], ignore_user_id=user_id):
+    if "phone" in fields and phone_exists(fields["phone"], ignore_user_id=user_id):
         return False, "شماره تماس تکراری است."
     sets, params = [], []
     for k,v in fields.items():
@@ -269,10 +245,6 @@ def update_user(user_id: int, **fields):
     conn = get_conn()
     conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id=?;", params)
     conn.commit(); conn.close(); return True, "ذخیره شد."
-
-def update_followup_status(task_id: int, new_status: str):
-    conn = get_conn(); conn.execute("UPDATE followups SET status=? WHERE id=?;", (new_status, task_id))
-    conn.commit(); conn.close()
 
 def create_call(user_id, call_dt: datetime, status, description, creator_id):
     conn = get_conn()
@@ -284,6 +256,10 @@ def create_followup(user_id, title, details, due_date_val: date, status, creator
     conn = get_conn()
     conn.execute("INSERT INTO followups (user_id, title, details, due_date, status, created_by) VALUES (?,?,?,?,?,?);",
                  (user_id, title.strip(), details.strip(), due_date_val.isoformat(), status, creator_id))
+    conn.commit(); conn.close()
+
+def update_followup_status(task_id: int, new_status: str):
+    conn = get_conn(); conn.execute("UPDATE followups SET status=? WHERE id=?;", (new_status, task_id))
     conn.commit(); conn.close()
 
 # ====== DataFrames ======
@@ -319,7 +295,7 @@ def df_followups_filtered(name_query, statuses, start, end, only_user_id, only_o
     if only_owner_appuser: where.append("u.owner_id=?"); params.append(only_owner_appuser)
     df = pd.read_sql_query(f"""
         SELECT f.id AS task_id, u.id AS user_id, u.full_name AS نام_کاربر,
-               COALESCE(c.name,'') AS شرکت, f.title AS عنوان, COALESCE(f.details,'') AS توضیحات,
+               COALESCE(c.name,'') AS شرکت, f.title AS عنوان, COALESCE(f.details,'') AS جزئیات,
                f.due_date AS تاریخ_پیگیری, f.status AS وضعیت
         FROM followups f
         JOIN users u ON u.id = f.user_id
@@ -360,31 +336,27 @@ def df_users_advanced(first_q, last_q, created_from, created_to,
       {where_sql}
       ORDER BY u.created_at DESC, u.id DESC
     """, conn, params=params)
-
     if has_open_task is not None:
         df = df[df["پیگیری_باز_دارد"] == (1 if has_open_task else 0)]
     if last_call_from:
         df = df[(df["آخرین_تماس"].notna()) & (pd.to_datetime(df["آخرین_تماس"]).dt.date >= last_call_from)]
     if last_call_to:
         df = df[(df["آخرین_تماس"].notna()) & (pd.to_datetime(df["آخرین_تماس"]).dt.date <= last_call_to)]
+    conn.close(); return df
 
-    # ترتیب ستون‌های نمایش به شکل «از راست: نام، نام‌خانوادگی، شرکت، ...»
-    desired = ["نام","نام_خانوادگی","شرکت","تلفن","وضعیت_کاربر","سطح_کاربر","حوزه_فعالیت","استان","تاریخ_ایجاد","آخرین_تماس","پیگیری_باز_دارد"]
-    cols = [c for c in desired if c in df.columns]
-    # ID و نام کامل را فعلاً نگه می‌داریم برای عملیات، ولی در جدول نمایش نمی‌دهیم
-    df["_user_id"] = df["ID"]
-    df = df[["ID","نام_کامل"] + cols]  # برای عملیات پایین، ID/نام‌کامل لازم است
-    return df
-
-# ====== رندر ساده جدول عمومی ======
-def render_df(df: pd.DataFrame):
+def render_df(df: pd.DataFrame, *, narrow_ids=True):
     if df is None or df.empty:
         st.info("داده‌ای یافت نشد."); return
     df_disp = df.copy()
-    # باریک کردن ID/ردیف اگر بود (در صورت نیاز می‌توان column_config داد)
-    st.dataframe(df_disp, use_container_width=True)
+    df_disp.insert(0, "ردیف", range(1, len(df_disp)+1))
+    col_cfg = {"ردیف": st.column_config.Column(width="small")}
+    if narrow_ids:
+        for cid in ["ID","call_id","task_id","user_id"]:
+            if cid in df_disp.columns:
+                col_cfg[cid] = st.column_config.Column(width="small")
+    st.dataframe(df_disp, use_container_width=True, column_config=col_cfg)
 
-# ================== Auth/Session ==================
+# ================== Auth ==================
 if "auth" not in st.session_state: st.session_state.auth = None
 
 def current_user_id() -> Optional[int]:
@@ -393,17 +365,6 @@ def current_user_id() -> Optional[int]:
 
 def is_admin() -> bool:
     return bool(st.session_state.auth and st.session_state.auth["role"] == "admin")
-
-def auth_check(username: str, password: str) -> Optional[Dict]:
-    conn = get_conn()
-    row = conn.execute("SELECT id, username, password_sha256, role, linked_user_id FROM app_users WHERE username=?;",
-                       (username.strip(),)).fetchone()
-    conn.close()
-    if not row: return None
-    uid, uname, pwh, role, linked_user_id = row
-    return {"id": uid, "username": uname, "role": role, "linked_user_id": linked_user_id} if sha256(password)==pwh else None
-
-def role_label(r: str) -> str: return "مدیر" if r=="admin" else "کارشناس فروش"
 
 def login_view():
     st.title("ورود به سیستم")
@@ -417,13 +378,24 @@ def login_view():
             if info: st.session_state.auth = info; st.rerun()
             else: st.error("نام کاربری یا رمز صحیح نیست.")
 
+def auth_check(username: str, password: str) -> Optional[Dict]:
+    conn = get_conn()
+    row = conn.execute("SELECT id, username, password_sha256, role, linked_user_id FROM app_users WHERE username=?;",
+                       (username.strip(),)).fetchone()
+    conn.close()
+    if not row: return None
+    uid, uname, pwh, role, linked_user_id = row
+    return {"id": uid, "username": uname, "role": role, "linked_user_id": linked_user_id} if sha256(password)==pwh else None
+
+def role_label(r: str) -> str: return "مدیر" if r=="admin" else "کارشناس فروش"
+
 def header_userbox():
     a = st.session_state.auth
     if not a: return
     st.markdown(f"**کاربر:** {a['username']} — **نقش:** {role_label(a['role'])}")
     st.button("خروج", on_click=lambda: st.session_state.update({"auth": None}))
 
-# ================== Dialogs (پاپ‌آپ‌ها) ==================
+# ================== Dialogs ==================
 @st.dialog("پروفایل کاربر")
 def dlg_profile(user_id: int):
     conn = get_conn()
@@ -431,17 +403,50 @@ def dlg_profile(user_id: int):
         SELECT u.id, u.first_name, u.last_name, u.full_name,
                COALESCE(c.name,''), COALESCE(u.phone,''), COALESCE(u.role,''),
                COALESCE(u.status,''), COALESCE(u.level,''), COALESCE(u.domain,''), COALESCE(u.province,''),
-               COALESCE(u.note,''), u.created_at
+               COALESCE(u.note,''), u.created_at, u.company_id
         FROM users u
         LEFT JOIN companies c ON c.id=u.company_id
         WHERE u.id=?;""", (user_id,)).fetchone()
+
+    df_calls = pd.read_sql_query("""
+        SELECT call_datetime AS تاریخ_و_زمان, status AS وضعیت, COALESCE(description,'') AS توضیحات
+        FROM calls WHERE user_id=? ORDER BY call_datetime DESC, id DESC
+    """, conn, params=(user_id,))
+
+    df_fu = pd.read_sql_query("""
+        SELECT title AS عنوان, COALESCE(details,'') AS جزئیات, due_date AS تاریخ_پیگیری, status AS وضعیت
+        FROM followups WHERE user_id=? ORDER BY date(due_date) DESC, id DESC
+    """, conn, params=(user_id,))
+
+    df_cowork = pd.DataFrame()
+    comp_id = info[13] if info else None
+    if comp_id:
+        df_cowork = pd.read_sql_query("""
+            SELECT first_name AS نام, last_name AS نام_خانوادگی, COALESCE(phone,'') AS تلفن, COALESCE(role,'') AS سمت
+            FROM users WHERE company_id=? AND id<>?
+            ORDER BY last_name COLLATE NOCASE, first_name COLLATE NOCASE
+        """, conn, params=(comp_id, user_id))
     conn.close()
-    if not info: st.warning("کاربر یافت نشد."); return
-    st.write("**نام:**", info[1]); st.write("**نام خانوادگی:**", info[2]); st.write("**نام کامل:**", info[3])
-    st.write("**شرکت:**", info[4]); st.write("**تلفن:**", info[5]); st.write("**سمت:**", info[6])
-    st.write("**وضعیت کاربر:**", info[7]); st.write("**سطح:**", info[8])
-    st.write("**حوزه فعالیت:**", info[9]); st.write("**استان:**", info[10])
-    st.write("**یادداشت:**", info[11]); st.write("**تاریخ ایجاد:**", info[12])
+
+    if not info:
+        st.warning("کاربر یافت نشد."); return
+
+    tab1, tab2, tab3, tab4 = st.tabs(["👤 اطلاعات کاربر", "📞 تماس‌ها", "🗓️ پیگیری‌ها", "👥 همکاران"])
+    with tab1:
+        st.write("**نام:**", info[1]); st.write("**نام خانوادگی:**", info[2]); st.write("**نام کامل:**", info[3])
+        st.write("**شرکت:**", info[4]); st.write("**تلفن:**", info[5]); st.write("**سمت:**", info[6])
+        st.write("**وضعیت کاربر:**", info[7]); st.write("**سطح:**", info[8])
+        st.write("**حوزه فعالیت:**", info[9]); st.write("**استان:**", info[10])
+        st.write("**یادداشت:**", info[11]); st.write("**تاریخ ایجاد:**", info[12])
+    with tab2:
+        st.dataframe(df_calls if not df_calls.empty else pd.DataFrame(columns=["تاریخ_و_زمان","وضعیت","توضیحات"]),
+                     use_container_width=True)
+    with tab3:
+        st.dataframe(df_fu if not df_fu.empty else pd.DataFrame(columns=["عنوان","جزئیات","تاریخ_پیگیری","وضعیت"]),
+                     use_container_width=True)
+    with tab4:
+        st.dataframe(df_cowork if not df_cowork.empty else pd.DataFrame(columns=["نام","نام_خانوادگی","تلفن","سمت"]),
+                     use_container_width=True)
 
 @st.dialog("ویرایش پروفایل")
 def dlg_edit_user(user_id: int):
@@ -450,8 +455,7 @@ def dlg_edit_user(user_id: int):
         SELECT first_name,last_name,phone,role,company_id,note,status,domain,province,level,owner_id
         FROM users WHERE id=?;""", (user_id,)).fetchone()
     companies = list_companies(None)
-    comp_map = {"— بدون شرکت —": None}
-    for i,n in companies: comp_map[n] = i
+    comp_map = {"— بدون شرکت —": None}; [comp_map.setdefault(n, i) for i,n in companies]  # type: ignore
     owners = list_sales_accounts_including_admins()
     owner_map = {f"{u} ({r})": i for i,u,r in owners}
     if not row: st.warning("کاربر یافت نشد."); return
@@ -462,10 +466,10 @@ def dlg_edit_user(user_id: int):
         with c2: last_name  = st.text_input("نام خانوادگی *", value=ln or "")
         with c3: phone      = st.text_input("تلفن *", value=ph or "")
         role = st.text_input("سمت", value=rl or "")
-        comp_label = "— بدون شرکت —"
+        comp_label = None
         for k,v in comp_map.items():
             if v == comp_id: comp_label = k; break
-        company_label = st.selectbox("شرکت", list(comp_map.keys()), index=list(comp_map.keys()).index(comp_label))
+        company_label = st.selectbox("شرکت", list(comp_map.keys()), index=list(comp_map.keys()).index(comp_label) if comp_label in comp_map else 0)
         note_v = st.text_area("یادداشت", value=note or "")
         s1,s2,s3 = st.columns(3)
         with s1: status_v = st.selectbox("وضعیت", USER_STATUSES, index=USER_STATUSES.index(stt) if stt in USER_STATUSES else 0)
@@ -507,7 +511,6 @@ def dlg_quick_followup(user_id: int):
             if not title.strip(): st.warning("عنوان اجباری است."); return
             d = jalali_str_to_date(j_due)
             if not d: st.warning("فرمت تاریخ صحیح نیست."); return
-            if is_holiday_gregorian(d): st.error("تاریخ انتخابی تعطیل است."); return
             create_followup(user_id, title, details, d, "در حال انجام", current_user_id())
             st.success("پیگیری ثبت شد."); st.rerun()
 
@@ -542,7 +545,7 @@ def page_companies():
                 if not name.strip(): st.warning("نام شرکت اجباری است.")
                 else: create_company(name, phone, address, note, level, current_user_id()); st.success(f"شرکت «{name}» ثبت شد.")
     conn = get_conn()
-    df = pd.read_sql_query("SELECT name AS نام, COALESCE(phone,'') AS تلفن, COALESCE(level,'') AS سطح FROM companies ORDER BY name COLLATE NOCASE;", conn)
+    df = pd.read_sql_query("SELECT id AS ID, name AS نام, COALESCE(phone,'') AS تلفن, COALESCE(level,'') AS سطح FROM companies ORDER BY name COLLATE NOCASE;", conn)
     conn.close(); render_df(df)
 
 def page_users():
@@ -581,7 +584,7 @@ def page_users():
                                          user_status,domain,province,level,owner_map[owner_label],current_user_id())
                     st.success(msg) if ok else st.error(msg)
 
-    # فیلترها (جمع‌وجور)
+    # فیلترها
     st.markdown("### فیلتر کاربران")
     f1,f2,f3 = st.columns([1,1,1])
     first_q = f1.text_input("نام")
@@ -596,58 +599,66 @@ def page_users():
     last_call_to_j   = k2.text_input("تا تاریخ آخرین تماس (شمسی)")
 
     created_from = jalali_str_to_date(created_from_j) if created_from_j else None
-    created_to   = jalali_str_to_date(created_to_j)   if created_to_j   else None
+    created_to   = jalali_str_to_date(created_to_j) if created_to_j else None
     last_call_from = jalali_str_to_date(last_call_from_j) if last_call_from_j else None
-    last_call_to   = jalali_str_to_date(last_call_to_j)   if last_call_to_j   else None
+    last_call_to   = jalali_str_to_date(last_call_to_j) if last_call_to_j else None
     has_open = None if has_open_opt=="— مهم نیست —" else (True if has_open_opt=="بله" else False)
 
+    # --- دیتافریم نهایی با ترتیب ستون‌ها ---
     df_all = df_users_advanced(first_q,last_q,created_from,created_to,has_open,last_call_from,last_call_to,h_stat,only_owner)
 
-    # جدول اصلی کاربران (بدون ID و بدون نام کامل)
-    view_cols = [c for c in ["نام","نام_خانوادگی","شرکت","تلفن","وضعیت_کاربر","سطح_کاربر","حوزه_فعالیت","استان","تاریخ_ایجاد","آخرین_تماس","پیگیری_باز_دارد"] if c in df_all.columns]
-    df_view = df_all[view_cols].copy() if not df_all.empty else pd.DataFrame(columns=view_cols)
-    render_df(df_view)
-
-    # ---- اقدامات سریع با «دکمه واقعی» (بدون تب جدید) ----
-    if df_all.empty:
-        st.info("کاربری یافت نشد.")
-        return
-
-    # استخراج user_id امن از DB
+    # نگاشت امن user_id (Hidden)
     conn = get_conn()
     id_map = pd.read_sql_query("SELECT id, full_name FROM users;", conn)
     conn.close()
     name_to_id = dict(zip(id_map["full_name"], id_map["id"]))
-    df_ops = df_all.copy()
-    df_ops["user_id"] = df_ops["نام_کامل"].map(name_to_id)
-    df_ops = df_ops[["user_id","نام","نام_خانوادگی"] + [c for c in view_cols if c not in ["نام","نام_خانوادگی"]]]
+    df_all["user_id"] = df_all["نام_کامل"].map(name_to_id)
 
-    st.markdown("### اقدامات سریع")
-    st.caption("برای هر ردیف از همین‌جا نمایش/ویرایش/ثبت تماس یا پیگیری انجام دهید.")
-    # محدودیت برای عملکرد UI
-    max_rows = min(len(df_ops), 100)
-    for i in range(max_rows):
-        row = df_ops.iloc[i]
-        uid = int(row["user_id"]) if pd.notna(row["user_id"]) else None
-        if not uid:
-            continue
-        # یک ردیف عملیات: نام‌ها + ۴ دکمه
-        cols = st.columns([2,1,1,1,1])
-        with cols[0]:
-            st.markdown(f"**{row['نام']} {row['نام_خانوادگی']}**")
-        with cols[1]:
-            if st.button("👁️ نمایش", key=f"view_{uid}"):
-                dlg_profile(uid)
-        with cols[2]:
-            if st.button("✏️ ویرایش", key=f"edit_{uid}"):
-                dlg_edit_user(uid)
-        with cols[3]:
-            if st.button("📞 تماس", key=f"call_{uid}"):
-                dlg_quick_call(uid)
-        with cols[4]:
-            if st.button("🗓️ پیگیری", key=f"fu_{uid}"):
-                dlg_quick_followup(uid)
-        st.divider()
+    # ترتیب خواسته‌شده
+    ordered = ["نام","نام_خانوادگی","شرکت","تلفن","وضعیت_کاربر","سطح_کاربر","آخرین_تماس","حوزه_فعالیت","استان","پیگیری_باز_دارد"]
+    ordered = [c for c in ordered if c in df_all.columns]
+
+    base = df_all[ordered + ["user_id","نام_کامل"]].copy()
+    # اکشن‌ها
+    base["👁 نمایش"] = False
+    base["✏ ویرایش"] = False
+    base["📞 تماس"]  = False
+    base["🗓️ پیگیری"] = False
+
+    colcfg = {
+        "👁 نمایش": st.column_config.CheckboxColumn("نمایش", help="نمایش پروفایل", width="small"),
+        "✏ ویرایش": st.column_config.CheckboxColumn("ویرایش", help="ویرایش پروفایل", width="small"),
+        "📞 تماس":  st.column_config.CheckboxColumn("تماس", help="ثبت تماس", width="small"),
+        "🗓️ پیگیری": st.column_config.CheckboxColumn("پیگیری", help="ثبت پیگیری", width="small"),
+        "user_id": st.column_config.Column("user_id", width="small", disabled=True, hidden=True),
+        "نام_کامل": st.column_config.Column("نام_کامل", disabled=True, hidden=True),
+    }
+
+    editable_cols = ["👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]
+    edited = st.data_editor(
+        base,
+        use_container_width=True,
+        hide_index=True,
+        column_config=colcfg,
+        disabled=[c for c in base.columns if c not in editable_cols],
+        key="users_editor"
+    )
+
+    # کلیک‌ها: هر ردیفی که هرکدام True شده
+    if not edited.empty:
+        act_cols = ["👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]
+        clicked_rows = edited[(edited[act_cols].astype(bool)).any(axis=1)]
+        if not clicked_rows.empty:
+            for _, r in clicked_rows.iterrows():
+                uid = int(r["user_id"]) if pd.notna(r["user_id"]) else None
+                if not uid: continue
+                if r["👁 نمایش"]:   dlg_profile(uid)
+                elif r["✏ ویرایش"]: dlg_edit_user(uid)
+                elif r["📞 تماس"]:   dlg_quick_call(uid)
+                elif r["🗓️ پیگیری"]: dlg_quick_followup(uid)
+            # ریست اکشن‌ها
+            st.session_state["users_editor"] = base
+            st.rerun()
 
 def page_calls():
     only_owner = None if is_admin() else current_user_id()
@@ -698,7 +709,6 @@ def page_followups():
                 else:
                     d = jalali_str_to_date(j_due)
                     if not d: st.warning("فرمت تاریخ صحیح نیست.")
-                    elif is_holiday_gregorian(d): st.error("تعطیل است.")
                     else:
                         create_followup(user_map[user_label], title, details, d, "در حال انجام", current_user_id())
                         st.success("پیگیری ثبت شد.")
@@ -712,7 +722,7 @@ def page_followups():
     end_date   = jalali_str_to_date(end_j)   if end_j else None
     df = df_followups_filtered(name_q, st_statuses, start_date, end_date, None, only_owner)
     if df.empty: st.info("داده‌ای نیست."); return
-    # ویرایش وضعیت درجا
+    # ویرایش وضعیت
     df_edit = df.copy()
     cfg = { "وضعیت": st.column_config.SelectboxColumn("وضعیت", options=TASK_STATUSES, width="small") }
     edited = st.data_editor(df_edit, use_container_width=True, column_config=cfg,
@@ -753,7 +763,7 @@ if not st.session_state.auth:
     login_view()
 else:
     with st.sidebar:
-        st.markdown("**فردا پک**")
+        st.markdown("**فردا پک**")  # عنوان سایدبار
         header_userbox()
         role = st.session_state.auth["role"]
         page = st.radio("منو", ("داشبورد","شرکت‌ها","کاربران","تماس‌ها","پیگیری‌ها") + (("مدیریت دسترسی",) if role=="admin" else tuple()), index=0)
