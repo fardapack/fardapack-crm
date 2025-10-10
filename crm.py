@@ -81,19 +81,15 @@ def dt_to_jalali_str(dt_iso_or_none: Optional[str]) -> str:
     if not dt_iso_or_none or not _jalali_supported():
         return dt_iso_or_none or ""
     try:
-        # پشتیبانی از هر دو حالت تاریخ-زمان و فقط تاریخ
         if "T" in dt_iso_or_none:
-            # isoformat
             gdt = datetime.fromisoformat(dt_iso_or_none)
         else:
-            # sqlite معمولاً 'YYYY-MM-DD HH:MM:SS'
             try:
                 gdt = datetime.strptime(dt_iso_or_none, "%Y-%m-%d %H:%M:%S")
             except ValueError:
                 try:
                     gdt = datetime.strptime(dt_iso_or_none, "%Y-%m-%d %H:%M")
                 except ValueError:
-                    # فقط تاریخ
                     gdt = datetime.strptime(dt_iso_or_none, "%Y-%m-%d")
         jdt = JalaliDateTime.fromgregorian(datetime=gdt)
         return jdt.strftime("%Y/%m/%d %H:%M")
@@ -276,7 +272,6 @@ def set_url_token(token: str):
         qp["t"] = token
         st.query_params = qp
     except Exception:
-        # fallback (قدیمی)
         try:
             cur = st.experimental_get_query_params()
             cur["t"] = token
@@ -419,7 +414,6 @@ def create_followup(user_id, title, details, due_date_val: date, status, creator
 # ====================== فیلتر سراسری کارشناس فروش ======================
 def sales_filter_widget(disabled: bool, preselected_ids: List[int], key: str = "sales_filter") -> List[int]:
     sales_accounts = list_sales_accounts_including_admins()
-    # نمایش username (role) و نگاشت به id
     label_to_id = {f"{u} ({r})": i for i, u, r in sales_accounts}
     labels = list(label_to_id.keys())
     default_idx = [labels.index(l) for l in labels if label_to_id[l] in preselected_ids] if preselected_ids else []
@@ -438,10 +432,8 @@ def df_users_advanced(first_q, last_q, created_from, created_to,
     if created_from: where.append("date(u.created_at) >= ?"); params.append(created_from.isoformat())
     if created_to:   where.append("date(u.created_at) <= ?"); params.append(created_to.isoformat())
     if statuses: where.append("u.status IN (" + ",".join(["?"]*len(statuses)) + ")"); params += statuses
-    # enforce دید کارشناس
     if enforce_owner:
         where.append("u.owner_id=?"); params.append(enforce_owner)
-    # فیلتر انتخابی کارشناس
     if owner_ids_filter:
         where.append("u.owner_id IN (" + ",".join(["?"]*len(owner_ids_filter)) + ")"); params += owner_ids_filter
 
@@ -477,7 +469,6 @@ def df_users_advanced(first_q, last_q, created_from, created_to,
     if last_call_to:
         df = df[(df["آخرین_تماس"].notna()) & (pd.to_datetime(df["آخرین_تماس"]).dt.date <= last_call_to)]
 
-    # تبدیل تاریخ‌ها به شمسی
     if "تاریخ_ایجاد" in df.columns:
         df["تاریخ_ایجاد"] = df["تاریخ_ایجاد"].apply(dt_to_jalali_str)
     if "آخرین_تماس" in df.columns:
@@ -537,7 +528,6 @@ def df_followups_by_filters(name_query, statuses, start, end,
     """, conn, params=params)
 
     if "تاریخ_پیگیری" in df.columns:
-        # due_date تاریخ فقط، بدون زمان
         df["تاریخ_پیگیری"] = df["تاریخ_پیگیری"].apply(lambda x: date_to_jalali_str(datetime.strptime(x, "%Y-%m-%d").date()) if x else "")
     conn.close(); return df
 
@@ -550,18 +540,18 @@ def df_companies_advanced(name_q, statuses, levels, created_from, created_to, ha
     if created_from: where.append("date(c.created_at) >= ?"); params.append(created_from.isoformat())
     if created_to:   where.append("date(c.created_at) <= ?"); params.append(created_to.isoformat())
 
-    # enforce دید کارشناس: شرکت‌هایی که حداقل یک کاربر با owner مشخص دارند
     if enforce_owner:
         where.append("""EXISTS(SELECT 1 FROM users ux WHERE ux.company_id=c.id AND ux.owner_id=?)""")
         params.append(enforce_owner)
 
-    # فیلتر انتخابی کارشناس
     if owner_ids_filter:
         placeholders = ",".join(["?"]*len(owner_ids_filter))
         where.append(f"""EXISTS(SELECT 1 FROM users ux WHERE ux.company_id=c.id AND ux.owner_id IN ({placeholders}))""")
         params += owner_ids_filter
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    # --- نکته‌ی سازگاری: DISTINCT + جداکننده در GROUP_CONCAT در زیرکوئری ---
     df = pd.read_sql_query(f"""
         SELECT
           c.id AS ID,
@@ -575,9 +565,13 @@ def df_companies_advanced(name_q, statuses, levels, created_from, created_to, ha
             WHERE u.company_id=c.id AND f.status='در حال انجام'
           ) AS پیگیری_باز_دارد,
           COALESCE((
-            SELECT GROUP_CONCAT(DISTINCT au.username, '، ')
-            FROM users ux LEFT JOIN app_users au ON au.id=ux.owner_id
-            WHERE ux.company_id=c.id
+            SELECT GROUP_CONCAT(x.username, '، ')
+            FROM (
+              SELECT DISTINCT au.username AS username
+              FROM users ux
+              LEFT JOIN app_users au ON au.id=ux.owner_id
+              WHERE ux.company_id=c.id AND au.username IS NOT NULL
+            ) AS x
           ), '') AS کارشناس_فروش
         FROM companies c
         {where_sql}
@@ -646,7 +640,6 @@ def role_label(r: str) -> str:
     return "مدیر" if r == "admin" else "کارشناس فروش"
 
 def on_logout():
-    # حذف نشست و پاک کردن پارام
     token = st.session_state.get("sess_token")
     if token:
         delete_session(token)
@@ -844,11 +837,16 @@ def dlg_company_view(company_id: int):
         st.write("**وضعیت:**", c[6])
         st.write("**تاریخ ایجاد:**", dt_to_jalali_str(c[7]))
 
-        # نمایش کارشناسان شرکت
+        # کارشناسان شرکت (نسخه سازگار با SQLite)
         experts = pd.read_sql_query("""
-            SELECT GROUP_CONCAT(DISTINCT au.username, '، ') AS experts
-            FROM users ux LEFT JOIN app_users au ON au.id=ux.owner_id
-            WHERE ux.company_id=?;
+            SELECT GROUP_CONCAT(x.username, '، ') AS experts
+            FROM (
+              SELECT DISTINCT au.username AS username
+              FROM users ux
+              LEFT JOIN app_users au ON au.id=ux.owner_id
+              WHERE ux.company_id=?
+                AND au.username IS NOT NULL
+            ) AS x;
         """, conn, params=(company_id,))
         ex = (experts.iloc[0]["experts"] or "").strip() if not experts.empty else ""
         st.write("**کارشناسان فروش مرتبط:**", ex or "—")
@@ -1014,7 +1012,6 @@ def page_companies():
     # --- فیلترها ---
     st.markdown("### فیلتر شرکت‌ها")
 
-    # فیلتر کارشناس فروش
     only_owner = None if is_admin() else current_user_id()
     preselect = [only_owner] if only_owner else []
     owner_ids_filter = sales_filter_widget(disabled=not is_admin(), preselected_ids=preselect, key="sf_companies")
@@ -1059,7 +1056,6 @@ def page_companies():
             key="companies_editor_widget"
         )
 
-        # تشخیص کلیک جدید - با اتکا به ID
         id_series = dfc["ID"].reset_index(drop=True)
         actions = ["👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]
 
@@ -1088,11 +1084,9 @@ def page_users():
     st.subheader("ثبت و مدیریت کاربران (رابط‌ها)")
     only_owner = None if is_admin() else current_user_id()
 
-    # فیلتر کارشناس فروش (بالای جدول)
     preselect = [only_owner] if only_owner else []
     owner_ids_filter = sales_filter_widget(disabled=not is_admin(), preselected_ids=preselect, key="sf_users")
 
-    # افزودن
     companies = list_companies(only_owner)
     company_options = {"— بدون شرکت —": None}
     for cid, cname in companies:
@@ -1133,7 +1127,6 @@ def page_users():
                     else:
                         st.error(msg)
 
-    # فیلترهای دیگر
     st.markdown("### فیلتر کاربران")
     f1, f2, f3 = st.columns([1, 1, 1])
     first_q = f1.text_input("نام")
@@ -1158,7 +1151,6 @@ def page_users():
                                owner_ids_filter if owner_ids_filter else None,
                                only_owner)
 
-    # نگاشت user_id امن
     conn = get_conn()
     id_map = pd.read_sql_query("SELECT id, full_name FROM users;", conn)
     conn.close()
@@ -1169,7 +1161,6 @@ def page_users():
     ordered = [c for c in ordered if c in df_all.columns]
 
     base = df_all[ordered + ["user_id","تاریخ_ایجاد"]].copy()
-    # تاریخ ایجاد را هم نشان بدهیم؟ اگر لازم نبود می‌توان حذف کرد
     if "تاریخ_ایجاد" in base.columns and "تاریخ_ایجاد" not in ordered:
         base.insert(5, "تاریخ_ایجاد", base.pop("تاریخ_ایجاد"))
 
@@ -1197,15 +1188,10 @@ def page_users():
         key="users_editor_widget"
     )
 
-    # تشخیص «کلیک جدید»
     actions = ["👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]
     def snapshot(df_show: pd.DataFrame) -> Dict[int, tuple]:
         out: Dict[int, tuple] = {}
-        # چون اندیس user_id حذف شده، یک راه امن برداشت از st.session_state نیست؛ از base index استفاده می‌کنیم:
-        # اینجا edited ایندکس عددی دارد، بنابراین از نگاشت نام به ID قبلی استفاده کردیم و در base نگه داشتیم.
-        # لذا snapshot را روی base اصلی می‌گیریم (اما ساده‌تر: از edited.iterrows با enumerate)
         for idx, row in edited.reset_index(drop=True).iterrows():
-            # برای یافتن user_id متناظر:
             uid = int(df_all.iloc[idx]["user_id"])
             out[uid] = tuple(bool(row.get(a, False)) for a in actions)
         return out
@@ -1224,7 +1210,6 @@ def page_calls():
     only_owner = None if is_admin() else current_user_id()
     st.subheader("ثبت تماس‌ها")
 
-    # فیلتر کارشناس فروش
     preselect = [only_owner] if only_owner else []
     owner_ids_filter = sales_filter_widget(disabled=not is_admin(), preselected_ids=preselect, key="sf_calls")
 
@@ -1260,7 +1245,6 @@ def page_followups():
     only_owner = None if is_admin() else current_user_id()
     st.subheader("ثبت پیگیری‌ها")
 
-    # فیلتر کارشناس فروش
     preselect = [only_owner] if only_owner else []
     owner_ids_filter = sales_filter_widget(disabled=not is_admin(), preselected_ids=preselect, key="sf_followups")
 
