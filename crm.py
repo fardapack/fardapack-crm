@@ -18,6 +18,9 @@ import streamlit as st
 import hashlib
 import uuid
 
+# 👇 اضافه شد
+import os, io, zipfile
+
 # ====================== صفحه و CSS ======================
 st.set_page_config(page_title="FardaPack Mini-CRM", page_icon="📇", layout="wide")
 st.markdown(
@@ -658,6 +661,45 @@ def header_userbox():
 init_db()
 try_autologin_from_url_token()
 
+# ====================== 🔐 دکمه‌های دانلود بکاپ دیتابیس ======================
+def db_download_ui(db_path: str = DB_PATH):
+    st.markdown("### 🛡️ پشتیبان‌گیری دیتابیس")
+    if not os.path.exists(db_path):
+        st.warning("فایل دیتابیس پیدا نشد. مسیر فعلی: `{}`".format(os.path.abspath(db_path)))
+        return
+
+    size = os.path.getsize(db_path)
+    mtime = datetime.fromtimestamp(os.path.getmtime(db_path)).strftime("%Y-%m-%d %H:%M:%S")
+    st.caption(f"نام: `{os.path.basename(db_path)}` — اندازه: {size:,} بایت — آخرین تغییر: {mtime}")
+
+    with open(db_path, "rb") as f:
+        db_bytes = f.read()
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.download_button(
+            label="⬇️ دانلود مستقیم crm.db",
+            data=db_bytes,
+            file_name=f"crm_{ts}.db",
+            mime="application/octet-stream",
+            use_container_width=True
+        )
+
+    with col2:
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(f"crm_{ts}.db", db_bytes)
+        zip_buf.seek(0)
+        st.download_button(
+            label="📦 دانلود نسخه فشرده (ZIP)",
+            data=zip_buf.getvalue(),
+            file_name=f"crm_{ts}.zip",
+            mime="application/zip",
+            use_container_width=True
+        )
+
 # ====================== دیالوگ‌ها: کاربران ======================
 @st.dialog("پروفایل کاربر")
 def dlg_profile(user_id: int):
@@ -864,24 +906,24 @@ def dlg_company_view(company_id: int):
 
     with tabs[2]:
         dcalls = pd.read_sql_query("""
-          SELECT cl.id AS ID, u.full_name AS نام_کاربر, cl.call_datetime AS تاریخ_و_زمان,
+          SELECT cl.id AS ID, u.full_name AS نام‌کاربر, cl.call_datetime AS تاریخ‌و‌زمان,
                  cl.status AS وضعیت, COALESCE(cl.description,'') AS توضیحات,
-                 COALESCE(au.username,'') AS کارشناس_فروش
+                 COALESCE(au.username,'') AS کارشناس‌فروش
           FROM calls cl
           JOIN users u ON u.id=cl.user_id
           LEFT JOIN app_users au ON au.id=u.owner_id
           WHERE u.company_id=?
           ORDER BY cl.call_datetime DESC, cl.id DESC;
         """, conn, params=(company_id,))
-        if "تاریخ_و_زمان" in dcalls.columns:
-            dcalls["تاریخ_و_زمان"] = dcalls["تاریخ_و_زمان"].apply(dt_to_jalali_str)
+        if "تاریخ‌و‌زمان" in dcalls.columns:
+            dcalls["تاریخ‌و‌زمان"] = dcalls["تاریخ‌و‌زمان"].apply(dt_to_jalali_str)
         st.dataframe(dcalls, use_container_width=True)
 
     with tabs[3]:
         dfu = pd.read_sql_query("""
-          SELECT f.id AS ID, u.full_name AS نام_کاربر, f.title AS عنوان,
+          SELECT f.id AS ID, u.full_name AS نام‌کاربر, f.title AS عنوان,
                  COALESCE(f.details,'') AS جزئیات, f.due_date AS تاریخ‌_پیگیری,
-                 f.status AS وضعیت, COALESCE(au.username,'') AS کارشناس_فروش
+                 f.status AS وضعیت, COALESCE(au.username,'') AS کارشناس‌فروش
           FROM followups f
           JOIN users u ON u.id=f.user_id
           LEFT JOIN app_users au ON au.id=u.owner_id
@@ -987,9 +1029,12 @@ def page_dashboard():
     c5.metric("تعداد شرکت‌ها", total_companies)
     c6.metric("تعداد کاربران", total_users)
 
+    st.divider()
+    # 👇 دکمه‌های دانلود بکاپ دیتابیس در داشبورد
+    db_download_ui(DB_PATH)
+
 def page_companies():
     st.subheader("ثبت و مدیریت شرکت‌ها")
-
     # --- افزودن شرکت ---
     with st.expander("➕ افزودن شرکت", expanded=False):
         with st.form("company_form", clear_on_submit=True):
@@ -1027,7 +1072,7 @@ def page_companies():
     has_open_opt = h2.selectbox("پیگیری باز دارد؟", ["— مهم نیست —", "بله", "خیر"], index=0)
 
     created_from = jalali_str_to_date(from_j) if from_j else None
-    created_to   = jalali_str_to_date(to_j) if to_j else None
+    created_to   = jalali_str_to_date(to_j) if from_j else None
     has_open = None if has_open_opt == "— مهم نیست —" else (True if has_open_opt == "بله" else False)
 
     dfc = df_companies_advanced(q_name, f_status, f_level, created_from, created_to, has_open,
