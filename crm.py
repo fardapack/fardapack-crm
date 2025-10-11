@@ -7,6 +7,7 @@ FardaPack Mini-CRM — Streamlit + SQLite (Streamlit 1.50 friendly)
 - ستون «کارشناس فروش» در همه جدول‌ها + فیلتر سراسری
 - دیالوگ‌های پروفایل/ویرایش/ثبت تماس/پیگیری
 - صفحات: داشبورد، شرکت‌ها، کاربران، تماس‌ها، پیگیری‌ها، مدیریت دسترسی (برای مدیر)
+- 📥 ایمپورت اکسل مخاطبین در صفحه کاربران
 """
 
 import sqlite3
@@ -95,7 +96,7 @@ def dt_to_jalali_str(dt_iso_or_none: Optional[str]) -> str:
                 except ValueError:
                     gdt = datetime.strptime(dt_iso_or_none, "%Y-%m-%d")
         jdt = JalaliDateTime.fromgregorian(datetime=gdt)
-        return jdt.strftime("%Y/%m/%d %H:%M")
+        return jdt.strftime("%Y/%m/%d %H:%م")
     except Exception:
         return dt_iso_or_none
 
@@ -413,6 +414,32 @@ def create_followup(user_id, title, details, due_date_val: date, status, creator
     conn.execute("INSERT INTO followups (user_id, title, details, due_date, status, created_by) VALUES (?,?,?,?,?,?);",
                  (user_id, (title or "").strip(), (details or "").strip(), due_date_val.isoformat(), status, creator_id))
     conn.commit(); conn.close()
+
+# ====================== توابع کمکی ایمپورت اکسل ======================
+def get_company_id_by_name(name: str) -> Optional[int]:
+    if not (name or "").strip():
+        return None
+    conn = get_conn()
+    row = conn.execute("SELECT id FROM companies WHERE name=?;", ((name or "").strip(),)).fetchone()
+    conn.close()
+    return row[0] if row else None
+
+def get_or_create_company(name: str, creator_id: Optional[int]) -> Optional[int]:
+    if not (name or "").strip():
+        return None
+    cid = get_company_id_by_name(name)
+    if cid:
+        return cid
+    create_company(name=name, phone="", address="", note="", level="هیچکدام", status="بدون وضعیت", creator_id=creator_id)
+    return get_company_id_by_name(name)
+
+def get_app_user_id_by_username(username: str) -> Optional[int]:
+    if not (username or "").strip():
+        return None
+    conn = get_conn()
+    row = conn.execute("SELECT id FROM app_users WHERE username=?;", ((username or "").strip(),)).fetchone()
+    conn.close()
+    return row[0] if row else None
 
 # ====================== فیلتر سراسری کارشناس فروش ======================
 def sales_filter_widget(disabled: bool, preselected_ids: List[int], key: str = "sales_filter") -> List[int]:
@@ -1171,6 +1198,97 @@ def page_users():
                         st.rerun()
                     else:
                         st.error(msg)
+
+    # --- 📥 ایمپورت اکسل مخاطبین ---
+    with st.expander("📥 ایمپورت اکسل مخاطبین", expanded=False):
+        st.caption("ستون‌های الزامی: FirstName, LastName, Phone — ستون‌های اختیاری: Role, Company, Status, Level, Domain, Province, OwnerUsername, Note")
+
+        # فایل نمونه برای دانلود
+        tpl = pd.DataFrame([{
+            "FirstName":"علی","LastName":"محمدی","Phone":"09120000000","Role":"مدیر خرید",
+            "Company":"شرکت نمونه","Status":"بدون وضعیت","Level":"هیچکدام",
+            "Domain":"صنعتی","Province":"تهران","OwnerUsername":"admin","Note":""
+        }])
+        sample = io.BytesIO()
+        try:
+            tpl.to_excel(sample, index=False, engine="openpyxl")
+        except Exception:
+            # اگر openpyxl نصب نباشد، اجازه می‌دهیم کاربر خودش ستون‌ها را مطابق توضیح بسازد.
+            sample = io.BytesIO(b"")
+        else:
+            sample.seek(0)
+
+        st.download_button("دانلود الگوی اکسل", data=sample.getvalue(), file_name="contacts_template.xlsx", disabled=(sample.getbuffer().nbytes==0))
+
+        up = st.file_uploader("فایل اکسل (xlsx)", type=["xlsx"])
+        if up is not None:
+            try:
+                df_imp = pd.read_excel(up)  # نیاز به openpyxl
+            except Exception as e:
+                st.error(f"خطا در خواندن فایل: {e}")
+                df_imp = None
+
+            if df_imp is not None:
+                st.write("پیش‌نمایش ۲۰ ردیف اول:")
+                st.dataframe(df_imp.head(20), use_container_width=True)
+
+                # نگاشت نام ستون‌ها (case-insensitive)
+                cols = {str(c).strip().lower(): c for c in df_imp.columns}
+                def col(name): return cols.get(name.lower())
+
+                required_ok = all(col(x) is not None for x in ["FirstName","LastName","Phone"])
+                if not required_ok:
+                    st.warning("ستون‌های الزامی FirstName, LastName, Phone باید موجود باشند.")
+                else:
+                    if st.button("شروع ایمپورت", use_container_width=True):
+                        ok_cnt, skip_cnt = 0, 0
+                        msgs: List[str] = []
+                        for idx, row in df_imp.iterrows():
+                            def getv(key):
+                                cc = col(key)
+                                if cc is None: return ""
+                                v = row.get(cc)
+                                return "" if (pd.isna(v) or v is None) else str(v).strip()
+
+                            first_name = getv("FirstName")
+                            last_name  = getv("LastName")
+                            phone      = getv("Phone")
+                            if not first_name or not last_name or not phone:
+                                skip_cnt += 1; msgs.append(f"رد شد ردیف {idx+2}: فیلد الزامی خالی.")
+                                continue
+
+                            job_role   = getv("Role")
+                            company_n  = getv("Company")
+                            status_v   = getv("Status")
+                            level_v    = getv("Level")
+                            domain_v   = getv("Domain")
+                            province_v = getv("Province")
+                            owner_u    = getv("OwnerUsername")
+                            note_v     = getv("Note")
+
+                            # نرمال‌سازی وضعیت/سطح
+                            status_v = status_v if status_v in USER_STATUSES else "بدون وضعیت"
+                            level_v  = level_v  if level_v  in LEVELS        else "هیچکدام"
+
+                            # شرکت و مالک
+                            company_id = get_or_create_company(company_n, current_user_id()) if company_n else None
+                            owner_id   = get_app_user_id_by_username(owner_u) if owner_u else None
+
+                            ok, msg = create_user(
+                                first_name, last_name, phone, job_role, company_id, note_v,
+                                status_v, domain_v, province_v, level_v, owner_id, current_user_id()
+                            )
+                            if ok:
+                                ok_cnt += 1
+                            else:
+                                skip_cnt += 1
+                                msgs.append(f"ردیف {idx+2}: {msg}")
+
+                        st.success(f"ایمپورت پایان یافت. ✅ موفق: {ok_cnt} | ❌ ناموفق: {skip_cnt}")
+                        if msgs:
+                            with st.expander("جزئیات موارد ناموفق"):
+                                for m in msgs:
+                                    st.write("•", m)
 
     st.markdown("### فیلتر کاربران")
     f1, f2, f3 = st.columns([1, 1, 1])
