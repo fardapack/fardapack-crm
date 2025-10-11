@@ -6,8 +6,8 @@ FardaPack Mini-CRM — Streamlit + SQLite (Streamlit 1.50 friendly)
 - تاریخ/ساعت شمسی در همه جدول‌ها
 - ستون «کارشناس فروش» در همه جدول‌ها + فیلتر سراسری
 - دیالوگ‌های پروفایل/ویرایش/ثبت تماس/پیگیری
+- عملیات گروهی روی کاربران (تغییر کارشناس فروشِ چندتایی)
 - صفحات: داشبورد، شرکت‌ها، کاربران، تماس‌ها، پیگیری‌ها، مدیریت دسترسی (برای مدیر)
-- 📥 ایمپورت اکسل مخاطبین در صفحه کاربران
 """
 
 import sqlite3
@@ -96,7 +96,7 @@ def dt_to_jalali_str(dt_iso_or_none: Optional[str]) -> str:
                 except ValueError:
                     gdt = datetime.strptime(dt_iso_or_none, "%Y-%m-%d")
         jdt = JalaliDateTime.fromgregorian(datetime=gdt)
-        return jdt.strftime("%Y/%m/%d %H:%م")
+        return jdt.strftime("%Y/%m/%d %H:%M")
     except Exception:
         return dt_iso_or_none
 
@@ -415,31 +415,17 @@ def create_followup(user_id, title, details, due_date_val: date, status, creator
                  (user_id, (title or "").strip(), (details or "").strip(), due_date_val.isoformat(), status, creator_id))
     conn.commit(); conn.close()
 
-# ====================== توابع کمکی ایمپورت اکسل ======================
-def get_company_id_by_name(name: str) -> Optional[int]:
-    if not (name or "").strip():
-        return None
+# ======= عملیات گروهی روی کاربران (Bulk) =======
+def bulk_update_users_owner(user_ids: List[int], new_owner_id: Optional[int]) -> int:
+    """owner_id را برای لیست user_ids به‌صورت گروهی تغییر می‌دهد. مقدار برگشتی تعداد ردیف‌های تغییر کرده است."""
+    if not user_ids:
+        return 0
     conn = get_conn()
-    row = conn.execute("SELECT id FROM companies WHERE name=?;", ((name or "").strip(),)).fetchone()
-    conn.close()
-    return row[0] if row else None
-
-def get_or_create_company(name: str, creator_id: Optional[int]) -> Optional[int]:
-    if not (name or "").strip():
-        return None
-    cid = get_company_id_by_name(name)
-    if cid:
-        return cid
-    create_company(name=name, phone="", address="", note="", level="هیچکدام", status="بدون وضعیت", creator_id=creator_id)
-    return get_company_id_by_name(name)
-
-def get_app_user_id_by_username(username: str) -> Optional[int]:
-    if not (username or "").strip():
-        return None
-    conn = get_conn()
-    row = conn.execute("SELECT id FROM app_users WHERE username=?;", ((username or "").strip(),)).fetchone()
-    conn.close()
-    return row[0] if row else None
+    placeholders = ",".join(["?"] * len(user_ids))
+    params: List = [new_owner_id] + [int(x) for x in user_ids]
+    cur = conn.execute(f"UPDATE users SET owner_id=? WHERE id IN ({placeholders});", params)
+    conn.commit(); conn.close()
+    return cur.rowcount if hasattr(cur, "rowcount") else len(user_ids)
 
 # ====================== فیلتر سراسری کارشناس فروش ======================
 def sales_filter_widget(disabled: bool, preselected_ids: List[int], key: str = "sales_filter") -> List[int]:
@@ -1199,97 +1185,6 @@ def page_users():
                     else:
                         st.error(msg)
 
-    # --- 📥 ایمپورت اکسل مخاطبین ---
-    with st.expander("📥 ایمپورت اکسل مخاطبین", expanded=False):
-        st.caption("ستون‌های الزامی: FirstName, LastName, Phone — ستون‌های اختیاری: Role, Company, Status, Level, Domain, Province, OwnerUsername, Note")
-
-        # فایل نمونه برای دانلود
-        tpl = pd.DataFrame([{
-            "FirstName":"علی","LastName":"محمدی","Phone":"09120000000","Role":"مدیر خرید",
-            "Company":"شرکت نمونه","Status":"بدون وضعیت","Level":"هیچکدام",
-            "Domain":"صنعتی","Province":"تهران","OwnerUsername":"admin","Note":""
-        }])
-        sample = io.BytesIO()
-        try:
-            tpl.to_excel(sample, index=False, engine="openpyxl")
-        except Exception:
-            # اگر openpyxl نصب نباشد، اجازه می‌دهیم کاربر خودش ستون‌ها را مطابق توضیح بسازد.
-            sample = io.BytesIO(b"")
-        else:
-            sample.seek(0)
-
-        st.download_button("دانلود الگوی اکسل", data=sample.getvalue(), file_name="contacts_template.xlsx", disabled=(sample.getbuffer().nbytes==0))
-
-        up = st.file_uploader("فایل اکسل (xlsx)", type=["xlsx"])
-        if up is not None:
-            try:
-                df_imp = pd.read_excel(up)  # نیاز به openpyxl
-            except Exception as e:
-                st.error(f"خطا در خواندن فایل: {e}")
-                df_imp = None
-
-            if df_imp is not None:
-                st.write("پیش‌نمایش ۲۰ ردیف اول:")
-                st.dataframe(df_imp.head(20), use_container_width=True)
-
-                # نگاشت نام ستون‌ها (case-insensitive)
-                cols = {str(c).strip().lower(): c for c in df_imp.columns}
-                def col(name): return cols.get(name.lower())
-
-                required_ok = all(col(x) is not None for x in ["FirstName","LastName","Phone"])
-                if not required_ok:
-                    st.warning("ستون‌های الزامی FirstName, LastName, Phone باید موجود باشند.")
-                else:
-                    if st.button("شروع ایمپورت", use_container_width=True):
-                        ok_cnt, skip_cnt = 0, 0
-                        msgs: List[str] = []
-                        for idx, row in df_imp.iterrows():
-                            def getv(key):
-                                cc = col(key)
-                                if cc is None: return ""
-                                v = row.get(cc)
-                                return "" if (pd.isna(v) or v is None) else str(v).strip()
-
-                            first_name = getv("FirstName")
-                            last_name  = getv("LastName")
-                            phone      = getv("Phone")
-                            if not first_name or not last_name or not phone:
-                                skip_cnt += 1; msgs.append(f"رد شد ردیف {idx+2}: فیلد الزامی خالی.")
-                                continue
-
-                            job_role   = getv("Role")
-                            company_n  = getv("Company")
-                            status_v   = getv("Status")
-                            level_v    = getv("Level")
-                            domain_v   = getv("Domain")
-                            province_v = getv("Province")
-                            owner_u    = getv("OwnerUsername")
-                            note_v     = getv("Note")
-
-                            # نرمال‌سازی وضعیت/سطح
-                            status_v = status_v if status_v in USER_STATUSES else "بدون وضعیت"
-                            level_v  = level_v  if level_v  in LEVELS        else "هیچکدام"
-
-                            # شرکت و مالک
-                            company_id = get_or_create_company(company_n, current_user_id()) if company_n else None
-                            owner_id   = get_app_user_id_by_username(owner_u) if owner_u else None
-
-                            ok, msg = create_user(
-                                first_name, last_name, phone, job_role, company_id, note_v,
-                                status_v, domain_v, province_v, level_v, owner_id, current_user_id()
-                            )
-                            if ok:
-                                ok_cnt += 1
-                            else:
-                                skip_cnt += 1
-                                msgs.append(f"ردیف {idx+2}: {msg}")
-
-                        st.success(f"ایمپورت پایان یافت. ✅ موفق: {ok_cnt} | ❌ ناموفق: {skip_cnt}")
-                        if msgs:
-                            with st.expander("جزئیات موارد ناموفق"):
-                                for m in msgs:
-                                    st.write("•", m)
-
     st.markdown("### فیلتر کاربران")
     f1, f2, f3 = st.columns([1, 1, 1])
     first_q = f1.text_input("نام")
@@ -1327,14 +1222,21 @@ def page_users():
     if "تاریخ_ایجاد" in base.columns and "تاریخ_ایجاد" not in ordered:
         base.insert(5, "تاریخ_ایجاد", base.pop("تاریخ_ایجاد"))
 
+    # 👇 ستون انتخاب برای عملیات گروهی
+    base["✅ انتخاب"] = False
+
+    # ستون‌های اقدام تکی
     base["👁 نمایش"] = False
     base["✏ ویرایش"] = False
     base["📞 تماس"]  = False
     base["🗓️ پیگیری"] = False
+
+    # اندیس را با user_id نگه می‌داریم تا انتخاب‌ها را بازیابی کنیم
     base = base.set_index("user_id", drop=True)
 
     display_cols = [c for c in base.columns if c != "user_id"]
     colcfg = {
+        "✅ انتخاب": st.column_config.CheckboxColumn("انتخاب", help="برای عملیات گروهی تیک بزن", width="small"),
         "👁 نمایش":  st.column_config.CheckboxColumn("نمایش", help="نمایش پروفایل", width="small"),
         "✏ ویرایش": st.column_config.CheckboxColumn("ویرایش", help="ویرایش پروفایل", width="small"),
         "📞 تماس":   st.column_config.CheckboxColumn("تماس", help="ثبت تماس", width="small"),
@@ -1347,15 +1249,56 @@ def page_users():
         hide_index=True,
         column_order=display_cols,
         column_config=colcfg,
-        disabled=[c for c in display_cols if c not in ["👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]],
+        disabled=[c for c in display_cols if c not in ["✅ انتخاب","👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]],
         key="users_editor_widget"
     )
 
+    # ======= نوار عملیات گروهی =======
+    # شناسه‌های انتخاب‌شده (براساس اندیس که همان user_id است)
+    selected_ids = [int(idx) for idx, row in edited.iterrows() if bool(row.get("✅ انتخاب", False))]
+
+    st.markdown("#### عملیات گروهی روی کاربران انتخاب‌شده")
+    cbu1, cbu2, cbu3 = st.columns([2, 2, 2])
+
+    # انتخاب کارشناس مقصد
+    owners = list_sales_accounts_including_admins()
+    if is_admin():
+        owner_labels = [f"{u} ({r})" for i, u, r in owners]
+        owner_ids = {f"{u} ({r})": i for i, u, r in owners}
+    else:
+        # کارشناس معمولی فقط می‌تواند به خودش انتقال دهد
+        me = st.session_state.auth["username"] if st.session_state.auth else "me"
+        owner_labels = [f"{me} (agent)"]
+        owner_ids = {owner_labels[0]: current_user_id()}
+
+    with cbu1:
+        target_owner_label = st.selectbox("کارشناس فروش جدید", owner_labels, index=0, key="bulk_owner_label")
+    new_owner_id = owner_ids[target_owner_label]
+
+    with cbu2:
+        st.info(f"تعداد انتخاب‌شده: **{len(selected_ids)}**")
+
+    def _apply_bulk_owner():
+        if not selected_ids:
+            st.warning("هیچ کاربری انتخاب نشده است.")
+            return
+        affected = bulk_update_users_owner(selected_ids, new_owner_id)
+        st.toast(f"کارشناس فروش {affected} مخاطب تغییر کرد.", icon="✅")
+        st.rerun()
+
+    with cbu3:
+        st.button("اعمال تغییر کارشناس برای انتخاب‌شده‌ها", type="primary", use_container_width=True, on_click=_apply_bulk_owner)
+
+    st.caption("نکته: ستون «✅ انتخاب» را برای رکوردهایی که می‌خواهی تغییر کنند فعال کن، سپس کارشناس جدید را انتخاب و دکمه اعمال را بزن.")
+
+    # ======= اکشن‌های تکی موجود =======
     actions = ["👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]
     def snapshot(df_show: pd.DataFrame) -> Dict[int, tuple]:
         out: Dict[int, tuple] = {}
-        for idx, row in edited.reset_index(drop=True).iterrows():
-            uid = int(df_all.iloc[idx]["user_id"])
+        # reset_index فقط برای ایندکس ترتیبیِ خروجی و نگه‌داشتن ایندکس user_id لازم است
+        df_reset = df_show.reset_index()
+        for idx, row in df_reset.iterrows():
+            uid = int(row["user_id"])
             out[uid] = tuple(bool(row.get(a, False)) for a in actions)
         return out
 
