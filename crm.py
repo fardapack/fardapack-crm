@@ -97,7 +97,7 @@ def dt_to_jalali_str(dt_iso_or_none: Optional[str]) -> str:
                 except ValueError:
                     gdt = datetime.strptime(dt_iso_or_none, "%Y-%m-%d")
         jdt = JalaliDateTime.fromgregorian(datetime=gdt)
-        return jdt.strftime("%Y/%m/%d %H:%M")  # ← اصلاح فرمت دقیقه
+        return jdt.strftime("%Y/%m/%d %H:%M")  # ← اصلاح دقیقه
     except Exception:
         return dt_iso_or_none
 
@@ -543,7 +543,7 @@ def df_calls_by_filters(name_query, statuses, start, end,
     """, conn, params=params)
 
     if "تاریخ_و_زمان" in df.columns:
-        df["تاریخ_و_زمان"] = df["تاریخ_و_زمان"] = df["تاریخ_و_زمان"].apply(dt_to_jalali_str)
+        df["تاریخ_و_زمان"] = df["تاریخ_و_زمان"].apply(dt_to_jalali_str)
     conn.close(); return df
 
 def df_followups_by_filters(name_query, statuses, start, end,
@@ -572,6 +572,59 @@ def df_followups_by_filters(name_query, statuses, start, end,
 
     if "تاریخ_پیگیری" in df.columns:
         df["تاریخ_پیگیری"] = df["تاریخ_پیگیری"].apply(lambda x: date_to_jalali_str(datetime.strptime(x, "%Y-%m-%d").date()) if x else "")
+    conn.close(); return df
+
+# ======= ✅ برگردانده شد: لیست شرکت‌ها برای صفحه «شرکت‌ها» =======
+def df_companies_advanced(name_q, statuses, levels, created_from, created_to, has_open,
+                          owner_ids_filter: Optional[List[int]], enforce_owner: Optional[int]):
+    conn = get_conn(); params, where = [], []
+    if name_q: where.append("c.name LIKE ?"); params.append(f"%{name_q.strip()}%")
+    if statuses: where.append("c.status IN (" + ",".join(["?"]*len(statuses)) + ")"); params += statuses
+    if levels:   where.append("c.level IN (" + ",".join(["?"]*len(levels)) + ")");   params += levels
+    if created_from: where.append("date(c.created_at) >= ?"); params.append(created_from.isoformat())
+    if created_to:   where.append("date(c.created_at) <= ?"); params.append(created_to.isoformat())
+
+    if enforce_owner:
+        where.append("""EXISTS(SELECT 1 FROM users ux WHERE ux.company_id=c.id AND ux.owner_id=?)""")
+        params.append(enforce_owner)
+
+    if owner_ids_filter:
+        placeholders = ",".join(["?"]*len(owner_ids_filter))
+        where.append(f"""EXISTS(SELECT 1 FROM users ux WHERE ux.company_id=c.id AND ux.owner_id IN ({placeholders}))""")
+        params += owner_ids_filter
+
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    df = pd.read_sql_query(f"""
+        SELECT
+          c.id AS ID,
+          c.name AS نام_شرکت,
+          COALESCE(c.phone,'') AS تلفن,
+          COALESCE(c.status,'') AS وضعیت_شرکت,
+          COALESCE(c.level,'') AS سطح_شرکت,
+          c.created_at AS تاریخ_ایجاد,
+          EXISTS(
+            SELECT 1 FROM users u JOIN followups f ON f.user_id=u.id
+            WHERE u.company_id=c.id AND f.status='در حال انجام'
+          ) AS پیگیری_باز_دارد,
+          COALESCE((
+            SELECT GROUP_CONCAT(x.username, '، ')
+            FROM (
+              SELECT DISTINCT au.username AS username
+              FROM users ux
+              LEFT JOIN app_users au ON au.id=ux.owner_id
+              WHERE ux.company_id=c.id AND au.username IS NOT NULL
+            ) AS x
+          ), '') AS کارشناس_فروش
+        FROM companies c
+        {where_sql}
+        ORDER BY c.name COLLATE NOCASE;
+    """, conn, params=params)
+
+    if has_open is not None:
+        df = df[df["پیگیری_باز_دارد"] == (1 if has_open else 0)]
+    if "تاریخ_ایجاد" in df.columns:
+        df["تاریخ_ایجاد"] = df["تاریخ_ایجاد"].apply(dt_to_jalali_str)
     conn.close(); return df
 
 # ====================== احراز هویت ======================
@@ -866,7 +919,6 @@ def dlg_company_view(company_id: int):
         st.write("**وضعیت:**", c[6])
         st.write("**تاریخ ایجاد:**", dt_to_jalali_str(c[7]))
 
-        # کارشناسان شرکت (نسخه سازگار با SQLite)
         experts = pd.read_sql_query("""
             SELECT GROUP_CONCAT(x.username, '، ') AS experts
             FROM (
@@ -1017,7 +1069,6 @@ def page_dashboard():
     c6.metric("تعداد کاربران", total_users)
 
     st.divider()
-    # 👇 دکمه‌های دانلود بکاپ دیتابیس در داشبورد
     db_download_ui(DB_PATH)
 
 def page_companies():
@@ -1059,7 +1110,7 @@ def page_companies():
     has_open_opt = h2.selectbox("پیگیری باز دارد؟", ["— مهم نیست —", "بله", "خیر"], index=0)
 
     created_from = jalali_str_to_date(from_j) if from_j else None
-    created_to   = jalali_str_to_date(to_j) if from_j else None
+    created_to   = jalali_str_to_date(to_j) if to_j else None  # ← اصلاح متغیر
     has_open = None if has_open_opt == "— مهم نیست —" else (True if has_open_opt == "بله" else False)
 
     dfc = df_companies_advanced(q_name, f_status, f_level, created_from, created_to, has_open,
@@ -1163,7 +1214,6 @@ def page_users():
     with st.expander("📥 ایمپورت اکسل مخاطبین", expanded=False):
         st.caption("ستون‌های الزامی: FirstName, LastName, Phone — ستون‌های اختیاری: Role, Company, Status, Level, Domain, Province, OwnerUsername, Note")
 
-        # فایل نمونه برای دانلود
         tpl = pd.DataFrame([{
             "FirstName":"علی","LastName":"محمدی","Phone":"09120000000","Role":"مدیر خرید",
             "Company":"شرکت نمونه","Status":"بدون وضعیت","Level":"هیچکدام",
@@ -1191,7 +1241,6 @@ def page_users():
                 st.write("پیش‌نمایش ۲۰ ردیف اول:")
                 st.dataframe(df_imp.head(20), use_container_width=True)
 
-                # نگاشت نام ستون‌ها (case-insensitive)
                 cols = {str(c).strip().lower(): c for c in df_imp.columns}
                 def col(name): return cols.get(name.lower())
 
@@ -1225,11 +1274,9 @@ def page_users():
                             owner_u    = getv("OwnerUsername")
                             note_v     = getv("Note")
 
-                            # نرمال‌سازی وضعیت/سطح
                             status_v = status_v if status_v in USER_STATUSES else "بدون وضعیت"
                             level_v  = level_v  if level_v  in LEVELS        else "هیچکدام"
 
-                            # شرکت و مالک
                             company_id = get_or_create_company(company_n, current_user_id()) if company_n else None
                             owner_id   = get_app_user_id_by_username(owner_u) if owner_u else None
 
@@ -1296,7 +1343,6 @@ def page_users():
     base["📞 تماس"]  = False
     base["🗓️ پیگیری"] = False
 
-    # اندیس را با user_id نگه می‌داریم تا انتخاب‌ها و اکشن‌ها پایدار باشند
     base = base.set_index("user_id", drop=True)
 
     display_cols = [c for c in base.columns if c != "user_id"]
@@ -1325,7 +1371,6 @@ def page_users():
 
     cbu1, cbu2, cbu3 = st.columns([2, 2, 2])
 
-    # لیست مقصد کارشناس؛ ادمین همه را می‌بیند، کارشناس فقط خودش
     owners_all = list_sales_accounts_including_admins()
     if is_admin():
         owner_labels = [f"{u} ({r})" for i, u, r in owners_all]
@@ -1358,12 +1403,11 @@ def page_users():
 
     st.caption("نکته: ستون «✅ انتخاب» را برای رکوردهایی که می‌خواهی تغییر کنند فعال کن، سپس کارشناس جدید را انتخاب و دکمه اعمال را بزن.")
 
-    # ======= اکشن‌های تکی (نمایش/ویرایش/ثبت تماس/پیگیری) =======
+    # ======= اکشن‌های تکی =======
     actions = ["👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]
 
     def snapshot(df_show: pd.DataFrame) -> Dict[int, tuple]:
         out: Dict[int, tuple] = {}
-        # چون اندیس جدول user_id است، می‌توانیم مستقیماً از آن استفاده کنیم
         for uid, row in df_show.iterrows():
             out[int(uid)] = tuple(bool(row.get(a, False)) for a in actions)
         return out
