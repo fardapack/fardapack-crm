@@ -97,7 +97,7 @@ def dt_to_jalali_str(dt_iso_or_none: Optional[str]) -> str:
                 except ValueError:
                     gdt = datetime.strptime(dt_iso_or_none, "%Y-%m-%d")
         jdt = JalaliDateTime.fromgregorian(datetime=gdt)
-        return jdt.strftime("%Y/%m/%d %H:%M")  # ← اصلاح دقیقه
+        return jdt.strftime("%Y/%m/%d %H:%M")
     except Exception:
         return dt_iso_or_none
 
@@ -325,8 +325,10 @@ def list_sales_accounts_including_admins() -> List[Tuple[int, str, str]]:
 def list_users_basic(only_owner_appuser: Optional[int]) -> List[Tuple[int, str, Optional[int]]]:
     conn = get_conn()
     if only_owner_appuser:
-        rows = conn.execute("SELECT id, full_name, company_id FROM users WHERE owner_id=? ORDER BY full_name COLLATE NOCASE;",
-                            (only_owner_appuser,)).fetchall()
+        rows = conn.execute(
+            "SELECT id, full_name, company_id FROM users WHERE owner_id=? ORDER BY full_name COLLATE NOCASE;",
+            (only_owner_appuser,)
+        ).fetchall()
     else:
         rows = conn.execute("SELECT id, full_name, company_id FROM users ORDER BY full_name COLLATE NOCASE;").fetchall()
     conn.close(); return rows
@@ -607,15 +609,11 @@ def df_companies_advanced(name_q, statuses, levels, created_from, created_to, ha
             SELECT 1 FROM users u JOIN followups f ON f.user_id=u.id
             WHERE u.company_id=c.id AND f.status='در حال انجام'
           ) AS پیگیری_باز_دارد,
-          COALESCE((
-            SELECT GROUP_CONCAT(x.username, '، ')
-            FROM (
-              SELECT DISTINCT au.username AS username
-              FROM users ux
-              LEFT JOIN app_users au ON au.id=ux.owner_id
-              WHERE ux.company_id=c.id AND au.username IS NOT NULL
-            ) AS x
-          ), '') AS کارشناس_فروش
+          COALESCE((SELECT GROUP_CONCAT(x.username, '، ')
+                    FROM (SELECT DISTINCT au.username AS username
+                          FROM users ux
+                          LEFT JOIN app_users au ON au.id=ux.owner_id
+                          WHERE ux.company_id=c.id AND au.username IS NOT NULL) AS x), '') AS کارشناس_فروش
         FROM companies c
         {where_sql}
         ORDER BY c.name COLLATE NOCASE;
@@ -827,13 +825,20 @@ def dlg_edit_user(user_id: int):
     row = conn.execute("""
         SELECT first_name,last_name,phone,role,company_id,note,status,domain,province,level,owner_id
         FROM users WHERE id=?;""", (user_id,)).fetchone()
+
+    # ✅ اصلاح: ساخت دیکشنری‌ها بدون list comprehension با خروجی ناخواسته
     companies = list_companies(None)
-    comp_map = {"— بدون شرکت —": None}; [comp_map.setdefault(n, i) for i, n in companies]  # type: ignore
+    comp_map: Dict[str, Optional[int]] = {"— بدون شرکت —": None}
+    comp_map.update({n: i for i, n in companies})
+
     owners = list_sales_accounts_including_admins()
-    owner_map = {"— بدون کارشناس —": None}; [owner_map.setdefault(f"{u} ({r})", i) for i, u, r in owners]  # type: ignore
+    owner_map: Dict[str, Optional[int]] = {"— بدون کارشناس —": None}
+    owner_map.update({f"{u} ({r})": i for i, u, r in owners})
+
     if not row:
         st.warning("کاربر یافت نشد.")
         return
+
     fn, ln, ph, rl, comp_id, note, stt, dom, prov, lvl, own = row
     with st.form(f"edit_user_{user_id}", clear_on_submit=False):
         c1, c2, c3 = st.columns(3)
@@ -841,8 +846,10 @@ def dlg_edit_user(user_id: int):
         with c2: last_name  = st.text_input("نام خانوادگی *", value=ln or "")
         with c3: phone      = st.text_input("تلفن *", value=ph or "")
         role = st.text_input("سمت", value=rl or "")
+
         comp_label = next((k for k, v in comp_map.items() if v == comp_id), "— بدون شرکت —")
         company_label = st.selectbox("شرکت", list(comp_map.keys()), index=list(comp_map.keys()).index(comp_label))
+
         note_v = st.text_area("یادداشت", value=note or "")
         s1, s2, s3 = st.columns(3)
         with s1: status_v = st.selectbox("وضعیت", USER_STATUSES, index=USER_STATUSES.index(stt) if stt in USER_STATUSES else 0)
@@ -1110,7 +1117,7 @@ def page_companies():
     has_open_opt = h2.selectbox("پیگیری باز دارد؟", ["— مهم نیست —", "بله", "خیر"], index=0)
 
     created_from = jalali_str_to_date(from_j) if from_j else None
-    created_to   = jalali_str_to_date(to_j) if to_j else None  # ← اصلاح متغیر
+    created_to   = jalali_str_to_date(to_j) if to_j else None
     has_open = None if has_open_opt == "— مهم نیست —" else (True if has_open_opt == "بله" else False)
 
     dfc = df_companies_advanced(q_name, f_status, f_level, created_from, created_to, has_open,
@@ -1332,7 +1339,7 @@ def page_users():
     ordered = ["نام","نام_خانوادگی","شرکت","تلفن","وضعیت_کاربر","سطح_کاربر","آخرین_تماس","حوزه_فعالیت","استان","پیگیری_باز_دارد","کارشناس_فروش"]
     ordered = [c for c in ordered if c in df_all.columns]
 
-    base = df_all[ordered + ["user_id","تاریخ_ایجاد"]].copy()
+    base = df_all[ordered + ["user_id","תاریخ_ایجاد" if "תاریخ_ایجاد" in df_all.columns else "تاریخ_ایجاد"]].copy()
     if "تاریخ_ایجاد" in base.columns and "تاریخ_ایجاد" not in ordered:
         base.insert(5, "تاریخ_ایجاد", base.pop("تاریخ_ایجاد"))
 
