@@ -8,6 +8,7 @@ FardaPack Mini-CRM — Streamlit + SQLite (Streamlit 1.50 friendly)
 - دیالوگ‌های پروفایل/ویرایش/ثبت تماس/پیگیری
 - صفحات: داشبورد، شرکت‌ها، کاربران، تماس‌ها، پیگیری‌ها، مدیریت دسترسی (برای مدیر)
 - 📥 ایمپورت اکسل مخاطبین در صفحه کاربران
+- ✅ عملیات گروهی در صفحه کاربران (تغییر کارشناس فروشِ چندتایی)
 """
 
 import sqlite3
@@ -96,7 +97,7 @@ def dt_to_jalali_str(dt_iso_or_none: Optional[str]) -> str:
                 except ValueError:
                     gdt = datetime.strptime(dt_iso_or_none, "%Y-%m-%d")
         jdt = JalaliDateTime.fromgregorian(datetime=gdt)
-        return jdt.strftime("%Y/%m/%d %H:%م")
+        return jdt.strftime("%Y/%m/%d %H:%M")  # ← اصلاح فرمت دقیقه
     except Exception:
         return dt_iso_or_none
 
@@ -415,6 +416,18 @@ def create_followup(user_id, title, details, due_date_val: date, status, creator
                  (user_id, (title or "").strip(), (details or "").strip(), due_date_val.isoformat(), status, creator_id))
     conn.commit(); conn.close()
 
+# ======= 🧰 عملیات گروهی روی کاربران (Bulk) =======
+def bulk_update_users_owner(user_ids: List[int], new_owner_id: Optional[int]) -> int:
+    """owner_id را برای لیست user_ids به‌صورت گروهی تغییر می‌دهد. مقدار برگشتی تعداد ردیف‌های تغییر کرده است."""
+    if not user_ids:
+        return 0
+    conn = get_conn()
+    placeholders = ",".join(["?"] * len(user_ids))
+    params: List = [new_owner_id] + [int(x) for x in user_ids]
+    cur = conn.execute(f"UPDATE users SET owner_id=? WHERE id IN ({placeholders});", params)
+    conn.commit(); conn.close()
+    return cur.rowcount if hasattr(cur, "rowcount") else len(user_ids)
+
 # ====================== توابع کمکی ایمپورت اکسل ======================
 def get_company_id_by_name(name: str) -> Optional[int]:
     if not (name or "").strip():
@@ -530,7 +543,7 @@ def df_calls_by_filters(name_query, statuses, start, end,
     """, conn, params=params)
 
     if "تاریخ_و_زمان" in df.columns:
-        df["تاریخ_و_زمان"] = df["تاریخ_و_زمان"].apply(dt_to_jalali_str)
+        df["تاریخ_و_زمان"] = df["تاریخ_و_زمان"] = df["تاریخ_و_زمان"].apply(dt_to_jalali_str)
     conn.close(); return df
 
 def df_followups_by_filters(name_query, statuses, start, end,
@@ -559,59 +572,6 @@ def df_followups_by_filters(name_query, statuses, start, end,
 
     if "تاریخ_پیگیری" in df.columns:
         df["تاریخ_پیگیری"] = df["تاریخ_پیگیری"].apply(lambda x: date_to_jalali_str(datetime.strptime(x, "%Y-%m-%d").date()) if x else "")
-    conn.close(); return df
-
-def df_companies_advanced(name_q, statuses, levels, created_from, created_to, has_open,
-                          owner_ids_filter: Optional[List[int]], enforce_owner: Optional[int]):
-    conn = get_conn(); params, where = [], []
-    if name_q: where.append("c.name LIKE ?"); params.append(f"%{name_q.strip()}%")
-    if statuses: where.append("c.status IN (" + ",".join(["?"]*len(statuses)) + ")"); params += statuses
-    if levels:   where.append("c.level IN (" + ",".join(["?"]*len(levels)) + ")");   params += levels
-    if created_from: where.append("date(c.created_at) >= ?"); params.append(created_from.isoformat())
-    if created_to:   where.append("date(c.created_at) <= ?"); params.append(created_to.isoformat())
-
-    if enforce_owner:
-        where.append("""EXISTS(SELECT 1 FROM users ux WHERE ux.company_id=c.id AND ux.owner_id=?)""")
-        params.append(enforce_owner)
-
-    if owner_ids_filter:
-        placeholders = ",".join(["?"]*len(owner_ids_filter))
-        where.append(f"""EXISTS(SELECT 1 FROM users ux WHERE ux.company_id=c.id AND ux.owner_id IN ({placeholders}))""")
-        params += owner_ids_filter
-
-    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-
-    # --- نکته‌ی سازگاری: DISTINCT + جداکننده در GROUP_CONCAT در زیرکوئری ---
-    df = pd.read_sql_query(f"""
-        SELECT
-          c.id AS ID,
-          c.name AS نام_شرکت,
-          COALESCE(c.phone,'') AS تلفن,
-          COALESCE(c.status,'') AS وضعیت_شرکت,
-          COALESCE(c.level,'') AS سطح_شرکت,
-          c.created_at AS تاریخ_ایجاد,
-          EXISTS(
-            SELECT 1 FROM users u JOIN followups f ON f.user_id=u.id
-            WHERE u.company_id=c.id AND f.status='در حال انجام'
-          ) AS پیگیری_باز_دارد,
-          COALESCE((
-            SELECT GROUP_CONCAT(x.username, '، ')
-            FROM (
-              SELECT DISTINCT au.username AS username
-              FROM users ux
-              LEFT JOIN app_users au ON au.id=ux.owner_id
-              WHERE ux.company_id=c.id AND au.username IS NOT NULL
-            ) AS x
-          ), '') AS کارشناس_فروش
-        FROM companies c
-        {where_sql}
-        ORDER BY c.name COLLATE NOCASE;
-    """, conn, params=params)
-
-    if has_open is not None:
-        df = df[df["پیگیری_باز_دارد"] == (1 if has_open else 0)]
-    if "تاریخ_ایجاد" in df.columns:
-        df["تاریخ_ایجاد"] = df["تاریخ_ایجاد"].apply(dt_to_jalali_str)
     conn.close(); return df
 
 # ====================== احراز هویت ======================
@@ -1213,7 +1173,6 @@ def page_users():
         try:
             tpl.to_excel(sample, index=False, engine="openpyxl")
         except Exception:
-            # اگر openpyxl نصب نباشد، اجازه می‌دهیم کاربر خودش ستون‌ها را مطابق توضیح بسازد.
             sample = io.BytesIO(b"")
         else:
             sample.seek(0)
@@ -1290,6 +1249,7 @@ def page_users():
                                 for m in msgs:
                                     st.write("•", m)
 
+    # ------------------------- فیلتر کاربران -------------------------
     st.markdown("### فیلتر کاربران")
     f1, f2, f3 = st.columns([1, 1, 1])
     first_q = f1.text_input("نام")
@@ -1314,12 +1274,14 @@ def page_users():
                                owner_ids_filter if owner_ids_filter else None,
                                only_owner)
 
+    # نگاشت user_id برای هر نام کامل
     conn = get_conn()
     id_map = pd.read_sql_query("SELECT id, full_name FROM users;", conn)
     conn.close()
     name_to_id = dict(zip(id_map["full_name"], id_map["id"]))
     df_all["user_id"] = df_all["نام_کامل"].map(name_to_id)
 
+    # ستون‌های مرتب‌شده برای نمایش
     ordered = ["نام","نام_خانوادگی","شرکت","تلفن","وضعیت_کاربر","سطح_کاربر","آخرین_تماس","حوزه_فعالیت","استان","پیگیری_باز_دارد","کارشناس_فروش"]
     ordered = [c for c in ordered if c in df_all.columns]
 
@@ -1327,14 +1289,19 @@ def page_users():
     if "تاریخ_ایجاد" in base.columns and "تاریخ_ایجاد" not in ordered:
         base.insert(5, "تاریخ_ایجاد", base.pop("تاریخ_ایجاد"))
 
+    # 👇 ستون انتخاب برای عملیات گروهی + اکشن‌های تکی
+    base["✅ انتخاب"] = False
     base["👁 نمایش"] = False
     base["✏ ویرایش"] = False
     base["📞 تماس"]  = False
     base["🗓️ پیگیری"] = False
+
+    # اندیس را با user_id نگه می‌داریم تا انتخاب‌ها و اکشن‌ها پایدار باشند
     base = base.set_index("user_id", drop=True)
 
     display_cols = [c for c in base.columns if c != "user_id"]
     colcfg = {
+        "✅ انتخاب": st.column_config.CheckboxColumn("انتخاب", help="برای عملیات گروهی تیک بزن", width="small"),
         "👁 نمایش":  st.column_config.CheckboxColumn("نمایش", help="نمایش پروفایل", width="small"),
         "✏ ویرایش": st.column_config.CheckboxColumn("ویرایش", help="ویرایش پروفایل", width="small"),
         "📞 تماس":   st.column_config.CheckboxColumn("تماس", help="ثبت تماس", width="small"),
@@ -1347,16 +1314,58 @@ def page_users():
         hide_index=True,
         column_order=display_cols,
         column_config=colcfg,
-        disabled=[c for c in display_cols if c not in ["👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]],
+        disabled=[c for c in display_cols if c not in ["✅ انتخاب","👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]],
         key="users_editor_widget"
     )
 
+    # ======= نوار عملیات گروهی =======
+    selected_ids = [int(idx) for idx, row in edited.iterrows() if bool(row.get("✅ انتخاب", False))]
+
+    st.markdown("#### عملیات گروهی روی کاربران انتخاب‌شده")
+
+    cbu1, cbu2, cbu3 = st.columns([2, 2, 2])
+
+    # لیست مقصد کارشناس؛ ادمین همه را می‌بیند، کارشناس فقط خودش
+    owners_all = list_sales_accounts_including_admins()
+    if is_admin():
+        owner_labels = [f"{u} ({r})" for i, u, r in owners_all]
+        owner_ids_map = {f"{u} ({r})": i for i, u, r in owners_all}
+        default_idx = 0
+    else:
+        me_row = next(((i, u, r) for i, u, r in owners_all if i == current_user_id()), None)
+        me_label = f"{me_row[1]} ({me_row[2]})" if me_row else "من (agent)"
+        owner_labels = [me_label]
+        owner_ids_map = {me_label: current_user_id()}
+        default_idx = 0
+
+    with cbu1:
+        target_owner_label = st.selectbox("کارشناس فروش جدید", owner_labels, index=default_idx, key="bulk_owner_label")
+    new_owner_id = owner_ids_map[target_owner_label]
+
+    with cbu2:
+        st.info(f"تعداد انتخاب‌شده: **{len(selected_ids)}**")
+
+    def _apply_bulk_owner():
+        if not selected_ids:
+            st.warning("هیچ کاربری انتخاب نشده است.")
+            return
+        affected = bulk_update_users_owner(selected_ids, new_owner_id)
+        st.toast(f"کارشناس فروش {affected} مخاطب تغییر کرد.", icon="✅")
+        st.rerun()
+
+    with cbu3:
+        st.button("اعمال تغییر کارشناس برای انتخاب‌شده‌ها", type="primary", use_container_width=True, on_click=_apply_bulk_owner)
+
+    st.caption("نکته: ستون «✅ انتخاب» را برای رکوردهایی که می‌خواهی تغییر کنند فعال کن، سپس کارشناس جدید را انتخاب و دکمه اعمال را بزن.")
+
+    # ======= اکشن‌های تکی (نمایش/ویرایش/ثبت تماس/پیگیری) =======
     actions = ["👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]
+
     def snapshot(df_show: pd.DataFrame) -> Dict[int, tuple]:
         out: Dict[int, tuple] = {}
-        for idx, row in edited.reset_index(drop=True).iterrows():
-            uid = int(df_all.iloc[idx]["user_id"])
-            out[uid] = tuple(bool(row.get(a, False)) for a in actions)
+        # چون اندیس جدول user_id است، می‌توانیم مستقیماً از آن استفاده کنیم
+        for uid, row in df_show.iterrows():
+            out[int(uid)] = tuple(bool(row.get(a, False)) for a in actions)
         return out
 
     prev = st.session_state.get("users_actions_prev", {})
