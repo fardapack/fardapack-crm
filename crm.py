@@ -7,13 +7,9 @@ FardaPack Mini-CRM — Streamlit + SQLite (Streamlit 1.50 friendly)
 - ستون «کارشناس فروش» در همه جدول‌ها + فیلتر سراسری
 - دیالوگ‌های پروفایل/ویرایش/ثبت تماس/پیگیری
 - صفحات: داشبورد، شرکت‌ها، کاربران، تماس‌ها، پیگیری‌ها، مدیریت دسترسی (برای مدیر)
-- 📥 ایمپورت اکسل مخاطبین در صفحه کاربران (openpyxl)
+- 📥 ایمپورت اکسل مخاطبین در صفحه کاربران
 - ✅ عملیات گروهی در صفحه کاربران (تغییر کارشناس فروشِ چندتایی)
-- ♻️ پشتیبان‌گیری و بازیابی دیتابیس از بکاپ (.db یا .zip)
-
-توجه:
-- نیازمند نصب پکیج‌های persiantools و openpyxl است.
-- برای اجرای محلی:  streamlit run app.py
+- ♻️ پشتیبان‌گیری/بازیابی دیتابیس از/به .db یا .zip
 """
 
 import sqlite3
@@ -24,6 +20,8 @@ import pandas as pd
 import streamlit as st
 import hashlib
 import uuid
+
+# 👇 اضافه شد
 import os, io, zipfile, shutil
 
 # ====================== صفحه و CSS ======================
@@ -41,8 +39,14 @@ st.markdown(
       [data-testid="stSidebar"] * { font-family: "Vazirmatn", sans-serif !important; }
       /* جداول RTL + هدر بولد */
       [data-testid="stDataFrame"], [data-testid="stDataEditor"]{ direction: rtl !important; }
-      [role="columnheader"]{ text-align: right !important; justify-content: flex-end !important; font-weight: 700 !important; }
-      [role="gridcell"]{ text-align: right !important; justify-content: flex-end !important; }
+      [data-testid="stDataFrame"] div[role="columnheader"],
+      [data-testid="stDataEditor"] div[role="columnheader"]{
+        text-align: right !important; justify-content: flex-end !important; font-weight: 700 !important;
+      }
+      [data-testid="stDataFrame"] div[role="gridcell"],
+      [data-testid="stDataEditor"] div[role="gridcell"]{
+        text-align: right !important; justify-content: flex-end !important;
+      }
     </style>
     """,
     unsafe_allow_html=True
@@ -120,29 +124,24 @@ USER_STATUSES = ["بدون وضعیت", "در حال پیگیری", "پیش فا
 COMPANY_STATUSES = ["بدون وضعیت", "در حال پیگیری", "پیش فاکتور", "مشتری شد"]
 LEVELS = ["هیچکدام", "طلایی", "نقره‌ای", "برنز"]
 
-
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10)
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.execute("PRAGMA journal_mode=WAL;")
     return conn
 
-
 def sha256(txt: str) -> str:
     return hashlib.sha256((txt or "").encode("utf-8")).hexdigest()
-
 
 def _column_exists(conn: sqlite3.Connection, table: str, col: str) -> bool:
     rows = conn.execute(f"PRAGMA table_info({table});").fetchall()
     return any(r[1] == col for r in rows)
 
-
 def init_db():
     conn = get_conn(); cur = conn.cursor()
 
     # ---- companies ----
-    cur.execute(
-        """
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS companies (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -154,16 +153,14 @@ def init_db():
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             created_by INTEGER
         );
-        """
-    )
+    """)
     if not _column_exists(conn, "companies", "status"):
         cur.execute("ALTER TABLE companies ADD COLUMN status TEXT NOT NULL DEFAULT 'بدون وضعیت';")
     if not _column_exists(conn, "companies", "level"):
         cur.execute("ALTER TABLE companies ADD COLUMN level TEXT NOT NULL DEFAULT 'هیچکدام';")
 
     # ---- users ----
-    cur.execute(
-        """
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             first_name TEXT,
@@ -182,8 +179,7 @@ def init_db():
             created_by INTEGER,
             FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE SET NULL
         );
-        """
-    )
+    """)
     for col, default in [
         ("first_name", None), ("last_name", None), ("domain", None), ("province", None),
         ("level", "'هیچکدام'"), ("owner_id", None)
@@ -192,8 +188,7 @@ def init_db():
             cur.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT" + (f" DEFAULT {default}" if default else "") + ";")
 
     # ---- calls ----
-    cur.execute(
-        """
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS calls (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -204,12 +199,10 @@ def init_db():
             created_by INTEGER,
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         );
-        """
-    )
+    """)
 
     # ---- followups ----
-    cur.execute(
-        """
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS followups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -221,12 +214,10 @@ def init_db():
             created_by INTEGER,
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         );
-        """
-    )
+    """)
 
     # ---- app_users ----
-    cur.execute(
-        """
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS app_users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
@@ -236,12 +227,10 @@ def init_db():
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(linked_user_id) REFERENCES users(id) ON DELETE SET NULL
         );
-        """
-    )
+    """)
 
     # ---- sessions (برای لاگین پایدار) ----
-    cur.execute(
-        """
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS sessions (
             token TEXT PRIMARY KEY,
             app_user_id INTEGER NOT NULL,
@@ -249,8 +238,7 @@ def init_db():
             expires_at TEXT,
             FOREIGN KEY(app_user_id) REFERENCES app_users(id) ON DELETE CASCADE
         );
-        """
-    )
+    """)
 
     # Indexes
     cur.execute("CREATE INDEX IF NOT EXISTS idx_users_company ON users(company_id);")
@@ -275,34 +263,27 @@ def create_session(app_user_id: int, days_valid: int = 30) -> str:
     conn.commit(); conn.close()
     return token
 
-
 def get_session_user(token: str):
     if not token:
         return None
     conn = get_conn()
-    row = conn.execute(
-        """
+    row = conn.execute("""
         SELECT au.id, au.username, au.role, au.linked_user_id
         FROM sessions s
         JOIN app_users au ON au.id = s.app_user_id
         WHERE s.token=? AND (s.expires_at IS NULL OR s.expires_at >= datetime('now'));
-        """,
-        (token,)
-    ).fetchone()
+    """, (token,)).fetchone()
     conn.close()
     if not row:
         return None
     uid, uname, role, linked_user_id = row
     return {"id": uid, "username": uname, "role": role, "linked_user_id": linked_user_id}
 
-
 def delete_session(token: str):
-    if not token:
-        return
+    if not token: return
     conn = get_conn()
     conn.execute("DELETE FROM sessions WHERE token=?;", (token,))
     conn.commit(); conn.close()
-
 
 def set_url_token(token: str):
     # Streamlit 1.50
@@ -318,7 +299,6 @@ def set_url_token(token: str):
         except Exception:
             pass
 
-
 def get_url_token() -> Optional[str]:
     try:
         qp = st.query_params
@@ -330,7 +310,6 @@ def get_url_token() -> Optional[str]:
             return val[0] if isinstance(val, list) else val
         except Exception:
             return None
-
 
 def clear_url_token():
     try:
@@ -348,18 +327,15 @@ def clear_url_token():
             pass
 
 # ====================== CRUD ======================
-
 def list_companies(_: Optional[int]) -> List[Tuple[int, str]]:
     conn = get_conn()
     rows = conn.execute("SELECT id, name FROM companies ORDER BY name COLLATE NOCASE;").fetchall()
     conn.close(); return rows
 
-
 def list_sales_accounts_including_admins() -> List[Tuple[int, str, str]]:
     conn = get_conn()
     rows = conn.execute("SELECT id, username, role FROM app_users WHERE role IN ('agent','admin') ORDER BY role DESC, username;").fetchall()
     conn.close(); return rows
-
 
 def list_users_basic(only_owner_appuser: Optional[int]) -> List[Tuple[int, str, Optional[int]]]:
     conn = get_conn()
@@ -372,7 +348,6 @@ def list_users_basic(only_owner_appuser: Optional[int]) -> List[Tuple[int, str, 
         rows = conn.execute("SELECT id, full_name, company_id FROM users ORDER BY full_name COLLATE NOCASE;").fetchall()
     conn.close(); return rows
 
-
 def phone_exists(phone: str, ignore_user_id: Optional[int] = None) -> bool:
     ph = (phone or "").strip()
     if not ph:
@@ -384,7 +359,6 @@ def phone_exists(phone: str, ignore_user_id: Optional[int] = None) -> bool:
         row = conn.execute("SELECT 1 FROM users WHERE phone=?;", (ph,)).fetchone()
     conn.close(); return row is not None
 
-
 def create_company(name, phone, address, note, level, status, creator_id):
     conn = get_conn()
     conn.execute(
@@ -392,7 +366,6 @@ def create_company(name, phone, address, note, level, status, creator_id):
         ((name or "").strip(), (phone or "").strip(), (address or "").strip(), (note or "").strip(), level, status, creator_id)
     )
     conn.commit(); conn.close()
-
 
 def update_company(company_id: int, **fields):
     sets, params = [], []
@@ -405,7 +378,6 @@ def update_company(company_id: int, **fields):
     conn.execute(f"UPDATE companies SET {', '.join(sets)} WHERE id=?;", params)
     conn.commit(); conn.close(); return True, "ذخیره شد."
 
-
 def create_user(first_name, last_name, phone, job_role, company_id, note,
                 status, domain, province, level, owner_id, creator_id) -> Tuple[bool, str]:
     if phone and phone_exists(phone):
@@ -414,15 +386,23 @@ def create_user(first_name, last_name, phone, job_role, company_id, note,
     if not full_name:
         return False, "نام و نام خانوادگی اجباری است."
     conn = get_conn()
-    conn.execute(
-        """INSERT INTO users
+    conn.execute("""INSERT INTO users
         (first_name,last_name,full_name,phone,role,company_id,note,status,domain,province,level,owner_id,created_by)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?);""",
-        ((first_name or "").strip(), (last_name or "").strip(), full_name, (phone or "").strip(), (job_role or "").strip(),
-         company_id, (note or "").strip(), status, (domain or "").strip(), (province or "").strip(), level, owner_id, creator_id)
-    )
+        ((first_name or "").strip(),
+         (last_name or "").strip(),
+         full_name,
+         (phone or "").strip(),
+         (job_role or "").strip(),
+         company_id,
+         (note or "").strip(),
+         status,
+         (domain or "").strip(),
+         (province or "").strip(),
+         level,
+         owner_id,
+         creator_id))
     conn.commit(); conn.close(); return True, "کاربر ثبت شد."
-
 
 def update_user(user_id: int, **fields):
     if "phone" in fields and phone_exists(fields.get("phone"), ignore_user_id=user_id):
@@ -437,18 +417,15 @@ def update_user(user_id: int, **fields):
     conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id=?;", params)
     conn.commit(); conn.close(); return True, "ذخیره شد."
 
-
 def update_followup_status(task_id: int, new_status: str):
     conn = get_conn(); conn.execute("UPDATE followups SET status=? WHERE id=?;", (new_status, task_id))
     conn.commit(); conn.close()
-
 
 def create_call(user_id, call_dt: datetime, status, description, creator_id):
     conn = get_conn()
     conn.execute("INSERT INTO calls (user_id, call_datetime, status, description, created_by) VALUES (?,?,?,?,?);",
                  (user_id, call_dt.isoformat(timespec="minutes"), status, (description or "").strip(), creator_id))
     conn.commit(); conn.close()
-
 
 def create_followup(user_id, title, details, due_date_val: date, status, creator_id):
     conn = get_conn()
@@ -457,9 +434,8 @@ def create_followup(user_id, title, details, due_date_val: date, status, creator
     conn.commit(); conn.close()
 
 # ======= 🧰 عملیات گروهی روی کاربران (Bulk) =======
-
 def bulk_update_users_owner(user_ids: List[int], new_owner_id: Optional[int]) -> int:
-    """owner_id را برای لیست user_ids به‌صورت گروهی تغییر می‌دهد."""
+    """owner_id را برای لیست user_ids به‌صورت گروهی تغییر می‌دهد. مقدار برگشتی تعداد ردیف‌های تغییر کرده است."""
     if not user_ids:
         return 0
     conn = get_conn()
@@ -470,7 +446,6 @@ def bulk_update_users_owner(user_ids: List[int], new_owner_id: Optional[int]) ->
     return cur.rowcount if hasattr(cur, "rowcount") else len(user_ids)
 
 # ====================== توابع کمکی ایمپورت اکسل ======================
-
 def get_company_id_by_name(name: str) -> Optional[int]:
     if not (name or "").strip():
         return None
@@ -478,7 +453,6 @@ def get_company_id_by_name(name: str) -> Optional[int]:
     row = conn.execute("SELECT id FROM companies WHERE name=?;", ((name or "").strip(),)).fetchone()
     conn.close()
     return row[0] if row else None
-
 
 def get_or_create_company(name: str, creator_id: Optional[int]) -> Optional[int]:
     if not (name or "").strip():
@@ -489,7 +463,6 @@ def get_or_create_company(name: str, creator_id: Optional[int]) -> Optional[int]
     create_company(name=name, phone="", address="", note="", level="هیچکدام", status="بدون وضعیت", creator_id=creator_id)
     return get_company_id_by_name(name)
 
-
 def get_app_user_id_by_username(username: str) -> Optional[int]:
     if not (username or "").strip():
         return None
@@ -499,7 +472,6 @@ def get_app_user_id_by_username(username: str) -> Optional[int]:
     return row[0] if row else None
 
 # ====================== فیلتر سراسری کارشناس فروش ======================
-
 def sales_filter_widget(disabled: bool, preselected_ids: List[int], key: str = "sales_filter") -> List[int]:
     sales_accounts = list_sales_accounts_including_admins()
     label_to_id = {f"{u} ({r})": i for i, u, r in sales_accounts}
@@ -511,7 +483,6 @@ def sales_filter_widget(disabled: bool, preselected_ids: List[int], key: str = "
     return [label_to_id[l] for l in selected_labels]
 
 # ====================== DataFrames برای صفحات ======================
-
 def df_users_advanced(first_q, last_q, created_from, created_to,
                       has_open_task, last_call_from, last_call_to,
                       statuses, owner_ids_filter: Optional[List[int]], enforce_owner: Optional[int]):
@@ -552,7 +523,6 @@ def df_users_advanced(first_q, last_q, created_from, created_to,
       ORDER BY u.created_at DESC, u.id DESC
     """, conn, params=params)
 
-    # فیلترها
     if has_open_task is not None:
         df = df[df["پیگیری_باز_دارد"] == (1 if has_open_task else 0)]
     if last_call_from:
@@ -560,13 +530,11 @@ def df_users_advanced(first_q, last_q, created_from, created_to,
     if last_call_to:
         df = df[(df["آخرین_تماس"].notna()) & (pd.to_datetime(df["آخرین_تماس"]).dt.date <= last_call_to)]
 
-    # تبدیل تاریخ‌ها
     if "تاریخ_ایجاد" in df.columns:
         df["تاریخ_ایجاد"] = df["تاریخ_ایجاد"].apply(dt_to_jalali_str)
     if "آخرین_تماس" in df.columns:
         df["آخرین_تماس"] = df["آخرین_تماس"].apply(dt_to_jalali_str)
 
-    # 👇 نمایش سفارشی برای «پیگیری_باز_دارد»
     def _open_followup_display(row):
         if int(row.get("پیگیری_باز_دارد", 0)) == 0 or pd.isna(row.get("آخرین_پیگیری_باز")):
             return "ندارد"
@@ -575,7 +543,6 @@ def df_users_advanced(first_q, last_q, created_from, created_to,
     df["وضعیت_پیگیری_باز"] = df.apply(_open_followup_display, axis=1)
 
     conn.close(); return df
-
 
 def df_calls_by_filters(name_query, statuses, start, end,
                         owner_ids_filter: Optional[List[int]], enforce_owner: Optional[int]):
@@ -603,7 +570,6 @@ def df_calls_by_filters(name_query, statuses, start, end,
     if "تاریخ_و_زمان" in df.columns:
         df["تاریخ_و_زمان"] = df["تاریخ_و_زمان"].apply(dt_to_jalali_str)
     conn.close(); return df
-
 
 def df_followups_by_filters(name_query, statuses, start, end,
                             owner_ids_filter: Optional[List[int]], enforce_owner: Optional[int]):
@@ -634,21 +600,103 @@ def df_followups_by_filters(name_query, statuses, start, end,
 
     conn.close(); return df
 
+def df_companies_advanced(name_q: Optional[str],
+                          statuses: List[str],
+                          levels: List[str],
+                          created_from: Optional[date],
+                          created_to: Optional[date],
+                          has_open_followup: Optional[bool],
+                          owner_ids_filter: Optional[List[int]],
+                          enforce_owner: Optional[int]) -> pd.DataFrame:
+    """
+    خروجی ستون‌ها:
+    ID, نام_شرکت, تلفن, وضعیت_شرکت, سطح_شرکت, تاریخ_ایجاد, پیگیری_باز_دارد, کارشناس_فروش
+    """
+    conn = get_conn()
+    where, params = [], []
+    if name_q:
+        where.append("c.name LIKE ?"); params.append(f"%{name_q.strip()}%")
+    if statuses:
+        where.append("c.status IN (" + ",".join(["?"]*len(statuses)) + ")"); params += statuses
+    if levels:
+        where.append("c.level IN (" + ",".join(["?"]*len(levels)) + ")"); params += levels
+    if created_from:
+        where.append("date(c.created_at) >= ?"); params.append(created_from.isoformat())
+    if created_to:
+        where.append("date(c.created_at) <= ?"); params.append(created_to.isoformat())
+
+    # مالک: اگر enforce_owner (غیرمدیر) باشد، فقط شرکت‌هایی که حداقل یک کاربر با owner_id=او دارند
+    if enforce_owner:
+        where.append("""
+            EXISTS (SELECT 1 FROM users ux WHERE ux.company_id=c.id AND ux.owner_id=?)
+        """); params.append(enforce_owner)
+    if owner_ids_filter:
+        placeholders = ",".join(["?"]*len(owner_ids_filter))
+        where.append(f"""
+            EXISTS (SELECT 1 FROM users ux WHERE ux.company_id=c.id AND ux.owner_id IN ({placeholders}))
+        """); params += owner_ids_filter
+
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    # آیا پیگیری باز دارد؟ (حداقل یک کاربر شرکت با پیگیری «در حال انجام»)
+    df = pd.read_sql_query(f"""
+        WITH company_base AS (
+            SELECT c.id,
+                   c.name,
+                   c.phone,
+                   c.status,
+                   c.level,
+                   c.created_at
+            FROM companies c
+            {where_sql}
+        ),
+        owners AS (
+            SELECT u.company_id AS cid, GROUP_CONCAT(DISTINCT au.username, '، ') AS owners
+            FROM users u
+            LEFT JOIN app_users au ON au.id=u.owner_id
+            GROUP BY u.company_id
+        ),
+        open_follow AS (
+            SELECT DISTINCT u.company_id AS cid
+            FROM followups f
+            JOIN users u ON u.id=f.user_id
+            WHERE f.status='در حال انجام'
+        )
+        SELECT
+            b.id AS ID,
+            b.name AS نام_شرکت,
+            COALESCE(b.phone,'') AS تلفن,
+            COALESCE(b.status,'') AS وضعیت_شرکت,
+            COALESCE(b.level,'') AS سطح_شرکت,
+            b.created_at AS تاریخ_ایجاد,
+            CASE WHEN o.cid IS NULL THEN 0 ELSE 1 END AS پیگیری_باز_دارد,
+            COALESCE(ow.owners,'') AS کارشناس_فروش
+        FROM company_base b
+        LEFT JOIN open_follow o ON o.cid=b.id
+        LEFT JOIN owners ow ON ow.cid=b.id
+        ORDER BY b.created_at DESC, b.id DESC;
+    """, conn, params=params)
+
+    if has_open_followup is not None:
+        df = df[df["پیگیری_باز_دارد"] == (1 if has_open_followup else 0)]
+
+    if "تاریخ_ایجاد" in df.columns:
+        df["تاریخ_ایجاد"] = df["تاریخ_ایجاد"].apply(dt_to_jalali_str)
+
+    conn.close(); return df
+
 # ====================== احراز هویت ======================
 if "auth" not in st.session_state:
     st.session_state.auth = None
 if "sess_token" not in st.session_state:
     st.session_state.sess_token = None
 
-
 def current_user_id() -> Optional[int]:
     a = st.session_state.auth
     return a["id"] if a else None
 
-
 def is_admin() -> bool:
     return bool(st.session_state.auth and st.session_state.auth["role"] == "admin")
-
 
 def auth_check(username: str, password: str):
     conn = get_conn()
@@ -660,7 +708,6 @@ def auth_check(username: str, password: str):
     uid, uname, pwh, role, linked_user_id = row
     return {"id": uid, "username": uname, "role": role, "linked_user_id": linked_user_id} if sha256(password) == pwh else None
 
-
 def try_autologin_from_url_token():
     if st.session_state.auth:
         return
@@ -671,7 +718,6 @@ def try_autologin_from_url_token():
     if info:
         st.session_state.auth = info
         st.session_state.sess_token = token
-
 
 def login_view():
     st.title("ورود به سیستم")
@@ -691,10 +737,8 @@ def login_view():
             else:
                 st.error("نام کاربری یا رمز صحیح نیست.")
 
-
 def role_label(r: str) -> str:
     return "مدیر" if r == "admin" else "کارشناس فروش"
-
 
 def on_logout():
     token = st.session_state.get("sess_token")
@@ -704,12 +748,11 @@ def on_logout():
     clear_url_token()
     st.rerun()
 
-
 def header_userbox():
     a = st.session_state.auth
     if not a:
         return
-    st.markdown(f"**کاربر:** {a['username']} — **نقش:** {role_label(a['role'])]")
+    st.markdown(f"**کاربر:** {a['username']} — **نقش:** {role_label(a['role'])}")
     st.button("خروج", on_click=on_logout)
 
 # تلاش برای لاگین خودکار از URL
@@ -717,7 +760,6 @@ init_db()
 try_autologin_from_url_token()
 
 # ====================== 🔐 پشتیبان‌گیری و بازیابی دیتابیس ======================
-
 def extract_db_from_zip(zip_bytes: bytes) -> Optional[bytes]:
     try:
         with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
@@ -727,7 +769,6 @@ def extract_db_from_zip(zip_bytes: bytes) -> Optional[bytes]:
     except Exception:
         return None
     return None
-
 
 def validate_db_file(path: str) -> Tuple[bool, str]:
     try:
@@ -748,7 +789,6 @@ def validate_db_file(path: str) -> Tuple[bool, str]:
         return True, "ok"
     except Exception as e:
         return False, str(e)
-
 
 def db_download_ui(db_path: str = DB_PATH):
     st.markdown("### 🛡️ پشتیبان‌گیری دیتابیس")
@@ -795,106 +835,59 @@ def db_download_ui(db_path: str = DB_PATH):
     restore_confirm = st.checkbox("تایید می‌کنم که با بازیابی، دیتای فعلی جایگزین می‌شود و احتمالاً از حساب خارج می‌شوم.", value=False)
     if st.button("بازیابی", type="primary", use_container_width=True, disabled=(up_restore is None or not restore_confirm)):
         if up_restore is None:
-            st.warning("ابتدا فایل بکاپ را انتخاب کن."); return
+            st.warning("ابتدا فایل بکاپ را انتخاب کن.")
+            return
         data = up_restore.read() or b""
         if len(data) == 0:
-            st.error("فایل خالی است."); return
+            st.error("فایل خالی است.")
+            return
         if up_restore.name.lower().endswith(".zip"):
             extracted = extract_db_from_zip(data)
             if not extracted:
-                st.error("در فایل ZIP هیچ فایل .db یافت نشد."); return
+                st.error("در فایل ZIP هیچ فایل .db یافت نشد.")
+                return
             data = extracted
+
         tmp_path = "_restore_tmp.db"
         try:
             with open(tmp_path, "wb") as f:
                 f.write(data)
         except Exception as e:
-            st.error(f"خطا در نوشتن فایل موقت: {e}"); return
+            st.error(f"خطا در نوشتن فایل موقت: {e}")
+            return
+
         ok, msg = validate_db_file(tmp_path)
         if not ok:
             os.remove(tmp_path)
-            st.error(f"اعتبارسنجی بکاپ ناموفق بود: {msg}"); return
+            st.error(f"اعتبارسنجی بکاپ ناموفق بود: {msg}")
+            return
+
         try:
             ts2 = datetime.now().strftime("%Y%m%d_%H%M%S")
             backup_name = f"crm_before_restore_{ts2}.db"
             shutil.copyfile(DB_PATH, backup_name)
         except Exception as e:
             st.warning(f"نتوانستم از دیتابیس فعلی بکاپ بگیرم: {e}")
+
         try:
             os.replace(tmp_path, DB_PATH)
         except Exception as e:
             st.error(f"جایگزینی دیتابیس ناموفق بود: {e}")
             try:
-                if os.path.exists(tmp_path): os.remove(tmp_path)
-            except Exception: pass
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
             return
-        st.success("بازیابی با موفقیت انجام شد. برنامه ری‌ران می‌شود (ممکن است لازم باشد دوباره وارد شوید). 🔁")
+
+        st.success("بازیابی با موفقیت انجام شد. برنامه ری‌ران می‌شود تا اسکیمای لازم هم اعمال شود (ممکن است لازم باشد دوباره وارد شوید). 🔁")
         st.rerun()
 
-# ====================== DataFrame شرکت‌ها ======================
-
-def df_companies_advanced(q_name: Optional[str], statuses: List[str], levels: List[str],
-                          created_from: Optional[date], created_to: Optional[date], has_open: Optional[bool],
-                          owner_ids_filter: Optional[List[int]], enforce_owner: Optional[int]) -> pd.DataFrame:
-    conn = get_conn(); params, where = [], ["1=1"]
-    if q_name: where.append("c.name LIKE ?"); params.append(f"%{q_name.strip()}%")
-    if statuses: where.append("c.status IN (" + ",".join(["?"]*len(statuses)) + ")"); params += statuses
-    if levels: where.append("c.level IN (" + ",".join(["?"]*len(levels)) + ")"); params += levels
-    if created_from: where.append("date(c.created_at) >= ?"); params.append(created_from.isoformat())
-    if created_to:   where.append("date(c.created_at) <= ?"); params.append(created_to.isoformat())
-
-    # فیلتر مالک/کارشناس از روی کاربران لینک‌شده به شرکت
-    if enforce_owner or owner_ids_filter:
-        if enforce_owner and owner_ids_filter:
-            ids = [enforce_owner] + owner_ids_filter
-            placeholders = ",".join(["?"]*len(ids))
-            where.append(f"EXISTS (SELECT 1 FROM users ux WHERE ux.company_id=c.id AND ux.owner_id IN ({placeholders}))")
-            params += ids
-        elif enforce_owner:
-            where.append("EXISTS (SELECT 1 FROM users ux WHERE ux.company_id=c.id AND ux.owner_id=?)"); params.append(enforce_owner)
-        else:
-            placeholders = ",".join(["?"]*len(owner_ids_filter))
-            where.append(f"EXISTS (SELECT 1 FROM users ux WHERE ux.company_id=c.id AND ux.owner_id IN ({placeholders}))")
-            params += owner_ids_filter
-
-    df = pd.read_sql_query(f"""
-        SELECT c.id AS ID,
-               c.name AS نام_شرکت,
-               COALESCE(c.phone,'') AS تلفن,
-               COALESCE(c.status,'') AS وضعیت_شرکت,
-               COALESCE(c.level,'')  AS سطح_شرکت,
-               c.created_at AS تاریخ_ایجاد,
-               -- آیا پیگیری باز برای یکی از کاربران این شرکت وجود دارد؟
-               EXISTS(
-                 SELECT 1 FROM followups f
-                 JOIN users u ON u.id=f.user_id
-                 WHERE u.company_id=c.id AND f.status='در حال انجام'
-               ) AS پیگیری_باز_دارد,
-               -- کارشناس‌های مرتبط (distinct)
-               (
-                 SELECT GROUP_CONCAT(DISTINCT au.username, '، ')
-                 FROM users u2 LEFT JOIN app_users au ON au.id=u2.owner_id
-                 WHERE u2.company_id=c.id AND au.username IS NOT NULL
-               ) AS کارشناس_فروش
-        FROM companies c
-        WHERE {' AND '.join(where)}
-        ORDER BY c.created_at DESC, c.id DESC
-    """, conn, params=params)
-
-    if has_open is not None:
-        df = df[df["پیگیری_باز_دارد"] == (1 if has_open else 0)]
-    if "تاریخ_ایجاد" in df.columns:
-        df["تاریخ_ایجاد"] = df["تاریخ_ایجاد"].apply(dt_to_jalali_str)
-
-    conn.close(); return df
-
 # ====================== دیالوگ‌ها: کاربران ======================
-
 @st.dialog("پروفایل کاربر")
 def dlg_profile(user_id: int):
     conn = get_conn()
-    u = conn.execute(
-        """
+    u = conn.execute("""
       SELECT u.id, u.first_name, u.last_name, COALESCE(u.full_name,''), COALESCE(c.name,''), COALESCE(u.phone,''),
              COALESCE(u.role,''), COALESCE(u.status,''), COALESCE(u.level,''), COALESCE(u.domain,''), COALESCE(u.province,''),
              COALESCE(u.note,''), u.created_at, u.company_id, COALESCE(au.username,'') AS sales_user
@@ -902,12 +895,11 @@ def dlg_profile(user_id: int):
       LEFT JOIN companies c ON c.id=u.company_id
       LEFT JOIN app_users au ON au.id=u.owner_id
       WHERE u.id=?;
-    """,
-        (user_id,)
-    ).fetchone()
+    """, (user_id,)).fetchone()
     conn.close()
     if not u:
-        st.warning("کاربر یافت نشد."); return
+        st.warning("کاربر یافت نشد.")
+        return
 
     tabs = st.tabs(["اطلاعات کاربر", "تماس‌ها", "پیگیری‌ها", "هم‌شرکتی‌ها"])
     with tabs[0]:
@@ -921,8 +913,7 @@ def dlg_profile(user_id: int):
 
     with tabs[1]:
         conn = get_conn()
-        dfc = pd.read_sql_query(
-            """
+        dfc = pd.read_sql_query("""
            SELECT cl.id AS ID,
                   cl.call_datetime AS تاریخ_و_زمان,
                   cl.status AS وضعیت,
@@ -933,9 +924,7 @@ def dlg_profile(user_id: int):
            LEFT JOIN app_users au ON au.id=uu.owner_id
            WHERE cl.user_id=?
            ORDER BY cl.call_datetime DESC, cl.id DESC;
-        """,
-            conn, params=(user_id,)
-        )
+        """, conn, params=(user_id,))
         conn.close()
         if "تاریخ_و_زمان" in dfc.columns:
             dfc["تاریخ_و_زمان"] = dfc["تاریخ_و_زمان"].apply(dt_to_jalali_str)
@@ -943,8 +932,7 @@ def dlg_profile(user_id: int):
 
     with tabs[2]:
         conn = get_conn()
-        dff = pd.read_sql_query(
-            """
+        dff = pd.read_sql_query("""
            SELECT f.id AS ID, f.title AS عنوان, COALESCE(f.details,'') AS جزئیات,
                   f.due_date AS تاریخ_پیگیری, f.status AS وضعیت,
                   COALESCE(au.username,'') AS کارشناس_فروش
@@ -953,9 +941,7 @@ def dlg_profile(user_id: int):
            LEFT JOIN app_users au ON au.id=uu.owner_id
            WHERE f.user_id=?
            ORDER BY f.due_date DESC, f.id DESC;
-        """,
-            conn, params=(user_id,)
-        )
+        """, conn, params=(user_id,))
         conn.close()
         if "تاریخ_پیگیری" in dff.columns:
             dff["تاریخ_پیگیری"] = dff["تاریخ_پیگیری"].apply(plain_date_to_jalali_str)
@@ -964,30 +950,26 @@ def dlg_profile(user_id: int):
     with tabs[3]:
         company_id = u[13]
         if not company_id:
-            st.info("شرکت ثبت نشده است."); return
+            st.info("شرکت ثبت نشده است.")
+            return
         conn = get_conn()
-        dcol = pd.read_sql_query(
-            """
+        dcol = pd.read_sql_query("""
             SELECT uu.id AS ID, uu.full_name AS نام_کامل, COALESCE(uu.phone,'') AS تلفن,
                    COALESCE(uu.role,'') AS سمت, COALESCE(au.username,'') AS کارشناس_فروش
             FROM users uu
             LEFT JOIN app_users au ON au.id=uu.owner_id
             WHERE uu.company_id=?
             ORDER BY uu.full_name;
-        """,
-            conn, params=(company_id,)
-        )
+        """, conn, params=(company_id,))
         conn.close()
         st.dataframe(dcol, use_container_width=True)
-
 
 @st.dialog("ویرایش پروفایل")
 def dlg_edit_user(user_id: int):
     conn = get_conn()
-    row = conn.execute(
-        "SELECT first_name,last_name,phone,role,company_id,note,status,domain,province,level,owner_id FROM users WHERE id=?;",
-        (user_id,)
-    ).fetchone()
+    row = conn.execute("""
+        SELECT first_name,last_name,phone,role,company_id,note,status,domain,province,level,owner_id
+        FROM users WHERE id=?;""", (user_id,)).fetchone()
 
     companies = list_companies(None)
     comp_map: Dict[str, Optional[int]] = {"— بدون شرکت —": None}
@@ -998,7 +980,8 @@ def dlg_edit_user(user_id: int):
     owner_map.update({f"{u} ({r})": i for i, u, r in owners})
 
     if not row:
-        st.warning("کاربر یافت نشد."); return
+        st.warning("کاربر یافت نشد.")
+        return
 
     fn, ln, ph, rl, comp_id, note, stt, dom, prov, lvl, own = row
     with st.form(f"edit_user_{user_id}", clear_on_submit=False):
@@ -1033,7 +1016,6 @@ def dlg_edit_user(user_id: int):
             else:
                 st.error(msg)
 
-
 @st.dialog("ثبت تماس سریع")
 def dlg_quick_call(user_id: int):
     with st.form(f"call_{user_id}", clear_on_submit=True):
@@ -1044,12 +1026,12 @@ def dlg_quick_call(user_id: int):
         if st.form_submit_button("ثبت تماس"):
             d = jalali_str_to_date(j_date)
             if not d:
-                st.warning("فرمت تاریخ صحیح نیست."); return
+                st.warning("فرمت تاریخ صحیح نیست.")
+                return
             create_call(user_id, datetime.combine(d, t), status, desc, current_user_id())
             st.toast("تماس ثبت شد. حالا پیگیری را ثبت کن.", icon="✅")
             st.session_state["open_fu_after_call_user_id"] = user_id
             st.rerun()
-
 
 @st.dialog("ثبت پیگیری سریع")
 def dlg_quick_followup(user_id: int):
@@ -1059,26 +1041,24 @@ def dlg_quick_followup(user_id: int):
         j_due = st.text_input("تاریخ پیگیری (شمسی YYYY/MM/DD) *", value=today_jalali_str())
         if st.form_submit_button("ثبت"):
             if not title.strip():
-                st.warning("عنوان اجباری است."); return
+                st.warning("عنوان اجباری است.")
+                return
             d = jalali_str_to_date(j_due)
             if not d:
-                st.warning("فرمت تاریخ صحیح نیست."); return
+                st.warning("فرمت تاریخ صحیح نیست.")
+                return
             create_followup(user_id, title, details, d, "در حال انجام", current_user_id())
             st.toast("پیگیری ثبت شد.", icon="✅")
 
 # ====================== دیالوگ‌ها: شرکت‌ها ======================
-
 @st.dialog("پروفایل شرکت")
 def dlg_company_view(company_id: int):
     conn = get_conn()
-    c = conn.execute(
-        """
+    c = conn.execute("""
        SELECT id, name, COALESCE(phone,''), COALESCE(address,''), COALESCE(note,''),
               COALESCE(level,''), COALESCE(status,''), created_at
        FROM companies WHERE id=?;
-    """,
-        (company_id,)
-    ).fetchone()
+    """, (company_id,)).fetchone()
     if not c:
         conn.close(); st.warning("شرکت یافت نشد."); return
 
@@ -1092,38 +1072,32 @@ def dlg_company_view(company_id: int):
         st.write("**وضعیت:**", c[6])
         st.write("**تاریخ ایجاد:**", dt_to_jalali_str(c[7]))
 
-        experts = pd.read_sql_query(
-            """
+        experts = pd.read_sql_query("""
             SELECT GROUP_CONCAT(x.username, '، ') AS experts
             FROM (
               SELECT DISTINCT au.username AS username
               FROM users ux
               LEFT JOIN app_users au ON au.id=ux.owner_id
-              WHERE ux.company_id=? AND au.username IS NOT NULL
+              WHERE ux.company_id=?
+                AND au.username IS NOT NULL
             ) AS x;
-        """,
-            conn, params=(company_id,)
-        )
+        """, conn, params=(company_id,))
         ex = (experts.iloc[0]["experts"] or "").strip() if not experts.empty else ""
         st.write("**کارشناسان فروش مرتبط:**", ex or "—")
 
     with tabs[1]:
-        dusers = pd.read_sql_query(
-            """
+        dusers = pd.read_sql_query("""
           SELECT uu.id AS ID, uu.full_name AS نام_کامل, COALESCE(uu.phone,'') AS تلفن,
                  COALESCE(uu.role,'') AS سمت, COALESCE(au.username,'') AS کارشناس_فروش
           FROM users uu
           LEFT JOIN app_users au ON au.id=uu.owner_id
           WHERE uu.company_id=?
           ORDER BY uu.full_name;
-        """,
-            conn, params=(company_id,)
-        )
+        """, conn, params=(company_id,))
         st.dataframe(dusers, use_container_width=True)
 
     with tabs[2]:
-        dcalls = pd.read_sql_query(
-            """
+        dcalls = pd.read_sql_query("""
           SELECT cl.id AS ID, u.full_name AS نام‌کاربر, cl.call_datetime AS تاریخ‌و‌زمان,
                  cl.status AS وضعیت, COALESCE(cl.description,'') AS توضیحات,
                  COALESCE(au.username,'') AS کارشناس‌فروش
@@ -1132,16 +1106,13 @@ def dlg_company_view(company_id: int):
           LEFT JOIN app_users au ON au.id=u.owner_id
           WHERE u.company_id=?
           ORDER BY cl.call_datetime DESC, cl.id DESC;
-        """,
-            conn, params=(company_id,)
-        )
+        """, conn, params=(company_id,))
         if "تاریخ‌و‌زمان" in dcalls.columns:
             dcalls["تاریخ‌و‌زمان"] = dcalls["تاریخ‌و‌زمان"].apply(dt_to_jalali_str)
         st.dataframe(dcalls, use_container_width=True)
 
     with tabs[3]:
-        dfu = pd.read_sql_query(
-            """
+        dfu = pd.read_sql_query("""
           SELECT f.id AS ID, u.full_name AS نام‌کاربر, f.title AS عنوان,
                  COALESCE(f.details,'') AS جزئیات, f.due_date AS تاریخ_پیگیری,
                  f.status AS وضعیت, COALESCE(au.username,'') AS کارشناس‌فروش
@@ -1150,14 +1121,11 @@ def dlg_company_view(company_id: int):
           LEFT JOIN app_users au ON au.id=u.owner_id
           WHERE u.company_id=?
           ORDER BY f.due_date DESC, f.id DESC;
-        """,
-            conn, params=(company_id,)
-        )
+        """, conn, params=(company_id,))
         if "تاریخ_پیگیری" in dfu.columns:
             dfu["تاریخ_پیگیری"] = dfu["تاریخ_پیگیری"].apply(plain_date_to_jalali_str)
         st.dataframe(dfu, use_container_width=True)
     conn.close()
-
 
 @st.dialog("ویرایش شرکت")
 def dlg_company_edit(company_id: int):
@@ -1165,7 +1133,8 @@ def dlg_company_edit(company_id: int):
     row = conn.execute("SELECT name, phone, address, note, level, status FROM companies WHERE id=?;", (company_id,)).fetchone()
     conn.close()
     if not row:
-        st.warning("شرکت یافت نشد."); return
+        st.warning("شرکت یافت نشد.")
+        return
     name, phone, addr, note, level, status = row
     with st.form(f"edit_company_{company_id}", clear_on_submit=False):
         c1, c2 = st.columns(2)
@@ -1184,14 +1153,14 @@ def dlg_company_edit(company_id: int):
             else:
                 st.error(msg)
 
-
 @st.dialog("ثبت تماس برای شرکت")
 def dlg_company_quick_call(company_id: int):
     conn = get_conn()
     users = pd.read_sql_query("SELECT id, full_name FROM users WHERE company_id=? ORDER BY full_name;", conn, params=(company_id,))
     conn.close()
     if users.empty:
-        st.info("برای این شرکت کاربری ثبت نشده است."); return
+        st.info("برای این شرکت کاربری ثبت نشده است.")
+        return
     options = {row["full_name"]: int(row["id"]) for _, row in users.iterrows()}
     with st.form(f"comp_call_{company_id}", clear_on_submit=True):
         user_label = st.selectbox("کاربر", list(options.keys()))
@@ -1202,10 +1171,10 @@ def dlg_company_quick_call(company_id: int):
         if st.form_submit_button("ثبت تماس"):
             d = jalali_str_to_date(j_date)
             if not d:
-                st.warning("فرمت تاریخ صحیح نیست."); return
+                st.warning("فرمت تاریخ صحیح نیست.")
+                return
             create_call(options[user_label], datetime.combine(d, t), status, desc, current_user_id())
             st.toast("تماس ثبت شد.", icon="✅")
-
 
 @st.dialog("ثبت پیگیری برای شرکت")
 def dlg_company_quick_fu(company_id: int):
@@ -1213,7 +1182,8 @@ def dlg_company_quick_fu(company_id: int):
     users = pd.read_sql_query("SELECT id, full_name FROM users WHERE company_id=? ORDER BY full_name;", conn, params=(company_id,))
     conn.close()
     if users.empty:
-        st.info("برای این شرکت کاربری ثبت نشده است."); return
+        st.info("برای این شرکت کاربری ثبت نشده است.")
+        return
     options = {row["full_name"]: int(row["id"]) for _, row in users.iterrows()}
     with st.form(f"comp_fu_{company_id}", clear_on_submit=True):
         user_label = st.selectbox("کاربر", list(options.keys()))
@@ -1222,15 +1192,16 @@ def dlg_company_quick_fu(company_id: int):
         j_due = st.text_input("تاریخ پیگیری (شمسی YYYY/MM/DD) *", value=today_jalali_str())
         if st.form_submit_button("ثبت"):
             if not title.strip():
-                st.warning("عنوان اجباری است."); return
+                st.warning("عنوان اجباری است.")
+                return
             d = jalali_str_to_date(j_due)
             if not d:
-                st.warning("فرمت تاریخ صحیح نیست."); return
+                st.warning("فرمت تاریخ صحیح نیست.")
+                return
             create_followup(options[user_label], title, details, d, "در حال انجام", current_user_id())
             st.toast("پیگیری ثبت شد.", icon="✅")
 
 # ====================== صفحات ======================
-
 def page_dashboard():
     st.subheader("داشبورد")
     conn = get_conn()
@@ -1252,7 +1223,6 @@ def page_dashboard():
 
     st.divider()
     db_download_ui(DB_PATH)
-
 
 def page_companies():
     st.subheader("ثبت و مدیریت شرکت‌ها")
@@ -1307,10 +1277,8 @@ def page_companies():
         base["📞 تماس"]  = False
         base["🗓️ پیگیری"] = False
 
-        display_cols = [
-            "نام_شرکت","تلفن","وضعیت_شرکت","سطح_شرکت","تاریخ_ایجاد","پیگیری_باز_دارد","کارشناس_فروش",
-            "👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"
-        ]
+        display_cols = ["نام_شرکت","تلفن","وضعیت_شرکت","سطح_شرکت","تاریخ_ایجاد","پیگیری_باز_دارد","کارشناس_فروش",
+                        "👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]
         colcfg = {
             "👁 نمایش":  st.column_config.CheckboxColumn("نمایش", help="نمایش پروفایل شرکت", width="small"),
             "✏ ویرایش": st.column_config.CheckboxColumn("ویرایش", help="ویرایش اطلاعات شرکت", width="small"),
@@ -1347,7 +1315,6 @@ def page_companies():
         st.session_state["companies_actions_prev"] = curr
     else:
         st.info("شرکتی یافت نشد.")
-
 
 def page_users():
     st.subheader("ثبت و مدیریت کاربران (رابط‌ها)")
@@ -1507,21 +1474,25 @@ def page_users():
                                owner_ids_filter if owner_ids_filter else None,
                                only_owner)
 
+    # نگاشت user_id برای هر نام کامل
     conn = get_conn()
     id_map = pd.read_sql_query("SELECT id, full_name FROM users;", conn)
     conn.close()
     name_to_id = dict(zip(id_map["full_name"], id_map["id"]))
     df_all["user_id"] = df_all["نام_کامل"].map(name_to_id)
 
+    # ستون‌هایی که می‌خواهیم نشان دهیم
     show_cols = ["نام","نام_خانوادگی","شرکت","تلفن","وضعیت_کاربر","سطح_کاربر","آخرین_تماس","استان","وضعیت_پیگیری_باز","کارشناس_فروش"]
     show_cols = [c for c in show_cols if c in df_all.columns]
-
     base = df_all[show_cols + ["user_id"]].copy()
+
+    # ستون‌های انتخاب/اکشن
     base["✅ انتخاب"] = False
     base["👁 نمایش"] = False
     base["✏ ویرایش"] = False
     base["📞 تماس"]  = False
     base["🗓️ پیگیری"] = False
+
     base = base.set_index("user_id", drop=True)
 
     display_cols = [c for c in base.columns if c != "user_id"]
@@ -1571,7 +1542,8 @@ def page_users():
 
     def _apply_bulk_owner():
         if not selected_ids:
-            st.warning("هیچ کاربری انتخاب نشده است."); return
+            st.warning("هیچ کاربری انتخاب نشده است.")
+            return
         affected = bulk_update_users_owner(selected_ids, new_owner_id)
         st.toast(f"کارشناس فروش {affected} مخاطب تغییر کرد.", icon="✅")
         st.rerun()
@@ -1604,7 +1576,6 @@ def page_users():
         uid_to_open = int(st.session_state["open_fu_after_call_user_id"])
         del st.session_state["open_fu_after_call_user_id"]
         dlg_quick_followup(uid_to_open)
-
 
 def page_calls():
     only_owner = None if is_admin() else current_user_id()
@@ -1640,7 +1611,6 @@ def page_calls():
     df = df_calls_by_filters(name_q, st_statuses, start_date, end_date,
                              owner_ids_filter if owner_ids_filter else None, only_owner)
     st.dataframe(df, use_container_width=True)
-
 
 def page_followups():
     only_owner = None if is_admin() else current_user_id()
@@ -1678,18 +1648,23 @@ def page_followups():
     df = df_followups_by_filters(name_q, st_statuses, start_date, end_date,
                                  owner_ids_filter if owner_ids_filter else None, only_owner)
 
-    # ✅ امکان تغییر وضعیت پیگیری از داخل جدول
     original_df = df.copy()
-    colcfg = {"وضعیت": st.column_config.SelectboxColumn("وضعیت", options=TASK_STATUSES, required=True, help="برای تغییر وضعیت کلیک کنید")}
-    edited_df = st.data_editor(df, use_container_width=True, key="followups_editor_widget", column_config=colcfg, hide_index=True)
+    colcfg = {
+        "وضعیت": st.column_config.SelectboxColumn("وضعیت", options=TASK_STATUSES, required=True, help="برای تغییر وضعیت کلیک کنید")
+    }
+    edited_df = st.data_editor(
+        df, use_container_width=True, key="followups_editor_widget",
+        column_config=colcfg,
+        hide_index=True
+    )
 
     try:
         if "ID" in edited_df.columns and "وضعیت" in edited_df.columns:
             merged = edited_df[["ID","وضعیت"]].merge(original_df[["ID","وضعیت"]], on="ID", suffixes=("_new","_old"))
             changed = merged[merged["وضعیت_new"] != merged["وضعیت_old"]]
             any_change = False
-            for _, r in changed.iterrows():
-                update_followup_status(int(r["ID"]), str(r["وضعیت_new"]))
+            for _, row in changed.iterrows():
+                update_followup_status(int(row["ID"]), str(row["وضعیت_new"]))
                 any_change = True
             if any_change:
                 st.toast("وضعیت پیگیری‌ها به‌روزرسانی شد.", icon="🔄")
@@ -1697,10 +1672,10 @@ def page_followups():
     except Exception:
         pass
 
-
 def page_access():
     if not is_admin():
-        st.info("این بخش فقط برای مدیر در دسترس است."); return
+        st.info("این بخش فقط برای مدیر در دسترس است.")
+        return
     all_users = list_users_basic(None)
     map_users = {"— بدون لینک —": None}
     for u in all_users:
