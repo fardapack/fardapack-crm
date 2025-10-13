@@ -9,7 +9,7 @@ FardaPack Mini-CRM — Streamlit + SQLite (Streamlit 1.50 friendly)
 - صفحات: داشبورد، شرکت‌ها، کاربران، تماس‌ها، پیگیری‌ها، مدیریت دسترسی (برای مدیر)
 - 📥 ایمپورت اکسل مخاطبین در صفحه کاربران
 - ✅ عملیات گروهی در صفحه کاربران (تغییر کارشناس فروشِ چندتایی)
-- ♻️ پشتیبان‌گیری/بازیابی دیتابیس از/به .db یا .zip
+- ♻️ بازیابی دیتابیس از بکاپ (.db یا .zip)
 """
 
 import sqlite3
@@ -523,6 +523,7 @@ def df_users_advanced(first_q, last_q, created_from, created_to,
       ORDER BY u.created_at DESC, u.id DESC
     """, conn, params=params)
 
+    # فیلترها
     if has_open_task is not None:
         df = df[df["پیگیری_باز_دارد"] == (1 if has_open_task else 0)]
     if last_call_from:
@@ -530,11 +531,13 @@ def df_users_advanced(first_q, last_q, created_from, created_to,
     if last_call_to:
         df = df[(df["آخرین_تماس"].notna()) & (pd.to_datetime(df["آخرین_تماس"]).dt.date <= last_call_to)]
 
+    # تبدیل تاریخ‌ها
     if "تاریخ_ایجاد" in df.columns:
         df["تاریخ_ایجاد"] = df["تاریخ_ایجاد"].apply(dt_to_jalali_str)
     if "آخرین_تماس" in df.columns:
         df["آخرین_تماس"] = df["آخرین_تماس"].apply(dt_to_jalali_str)
 
+    # 👇 نمایش سفارشی برای «پیگیری_باز_دارد»
     def _open_followup_display(row):
         if int(row.get("پیگیری_باز_دارد", 0)) == 0 or pd.isna(row.get("آخرین_پیگیری_باز")):
             return "ندارد"
@@ -595,93 +598,9 @@ def df_followups_by_filters(name_query, statuses, start, end,
         ORDER BY f.due_date DESC, f.id DESC
     """, conn, params=params)
 
+    # ✅ نمایش تاریخ پیگیری با همان فرمت ثبت (شمسی)
     if "تاریخ_پیگیری" in df.columns:
         df["تاریخ_پیگیری"] = df["تاریخ_پیگیری"].apply(plain_date_to_jalali_str)
-
-    conn.close(); return df
-
-def df_companies_advanced(name_q: Optional[str],
-                          statuses: List[str],
-                          levels: List[str],
-                          created_from: Optional[date],
-                          created_to: Optional[date],
-                          has_open_followup: Optional[bool],
-                          owner_ids_filter: Optional[List[int]],
-                          enforce_owner: Optional[int]) -> pd.DataFrame:
-    """
-    خروجی ستون‌ها:
-    ID, نام_شرکت, تلفن, وضعیت_شرکت, سطح_شرکت, تاریخ_ایجاد, پیگیری_باز_دارد, کارشناس_فروش
-    """
-    conn = get_conn()
-    where, params = [], []
-    if name_q:
-        where.append("c.name LIKE ?"); params.append(f"%{name_q.strip()}%")
-    if statuses:
-        where.append("c.status IN (" + ",".join(["?"]*len(statuses)) + ")"); params += statuses
-    if levels:
-        where.append("c.level IN (" + ",".join(["?"]*len(levels)) + ")"); params += levels
-    if created_from:
-        where.append("date(c.created_at) >= ?"); params.append(created_from.isoformat())
-    if created_to:
-        where.append("date(c.created_at) <= ?"); params.append(created_to.isoformat())
-
-    # مالک: اگر enforce_owner (غیرمدیر) باشد، فقط شرکت‌هایی که حداقل یک کاربر با owner_id=او دارند
-    if enforce_owner:
-        where.append("""
-            EXISTS (SELECT 1 FROM users ux WHERE ux.company_id=c.id AND ux.owner_id=?)
-        """); params.append(enforce_owner)
-    if owner_ids_filter:
-        placeholders = ",".join(["?"]*len(owner_ids_filter))
-        where.append(f"""
-            EXISTS (SELECT 1 FROM users ux WHERE ux.company_id=c.id AND ux.owner_id IN ({placeholders}))
-        """); params += owner_ids_filter
-
-    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-
-    # آیا پیگیری باز دارد؟ (حداقل یک کاربر شرکت با پیگیری «در حال انجام»)
-    df = pd.read_sql_query(f"""
-        WITH company_base AS (
-            SELECT c.id,
-                   c.name,
-                   c.phone,
-                   c.status,
-                   c.level,
-                   c.created_at
-            FROM companies c
-            {where_sql}
-        ),
-        owners AS (
-            SELECT u.company_id AS cid, GROUP_CONCAT(DISTINCT au.username, '، ') AS owners
-            FROM users u
-            LEFT JOIN app_users au ON au.id=u.owner_id
-            GROUP BY u.company_id
-        ),
-        open_follow AS (
-            SELECT DISTINCT u.company_id AS cid
-            FROM followups f
-            JOIN users u ON u.id=f.user_id
-            WHERE f.status='در حال انجام'
-        )
-        SELECT
-            b.id AS ID,
-            b.name AS نام_شرکت,
-            COALESCE(b.phone,'') AS تلفن,
-            COALESCE(b.status,'') AS وضعیت_شرکت,
-            COALESCE(b.level,'') AS سطح_شرکت,
-            b.created_at AS تاریخ_ایجاد,
-            CASE WHEN o.cid IS NULL THEN 0 ELSE 1 END AS پیگیری_باز_دارد,
-            COALESCE(ow.owners,'') AS کارشناس_فروش
-        FROM company_base b
-        LEFT JOIN open_follow o ON o.cid=b.id
-        LEFT JOIN owners ow ON ow.cid=b.id
-        ORDER BY b.created_at DESC, b.id DESC;
-    """, conn, params=params)
-
-    if has_open_followup is not None:
-        df = df[df["پیگیری_باز_دارد"] == (1 if has_open_followup else 0)]
-
-    if "تاریخ_ایجاد" in df.columns:
-        df["تاریخ_ایجاد"] = df["تاریخ_ایجاد"].apply(dt_to_jalali_str)
 
     conn.close(); return df
 
@@ -763,6 +682,7 @@ try_autologin_from_url_token()
 def extract_db_from_zip(zip_bytes: bytes) -> Optional[bytes]:
     try:
         with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
+            # اولین فایل .db
             for info in zf.infolist():
                 if info.filename.lower().endswith(".db"):
                     return zf.read(info)
@@ -774,16 +694,19 @@ def validate_db_file(path: str) -> Tuple[bool, str]:
     try:
         conn = sqlite3.connect(path, timeout=5)
         cur = conn.cursor()
+        # سلامت دیتابیس
         chk = cur.execute("PRAGMA integrity_check;").fetchone()
         if not chk or str(chk[0]).lower() != "ok":
             conn.close()
             return False, f"integrity_check ناموفق: {chk[0] if chk else 'نامشخص'}"
+        # جداول ضروری
         required = {"companies","users","calls","followups","app_users","sessions"}
         rows = cur.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()
         have = {r[0] for r in rows}
         missing = required - have
         conn.close()
         if missing:
+            # اگر فقط sessions نبود، init_db بعداً آن را می‌سازد؛ ولی app_users/others ضروری‌اند
             if missing - {"sessions"}:
                 return False, f"جدول(های) ضروری موجود نیست: {', '.join(sorted(missing))}"
         return True, "ok"
@@ -828,6 +751,7 @@ def db_download_ui(db_path: str = DB_PATH):
             use_container_width=True
         )
 
+    # ---------- ♻️ بازیابی از بکاپ ----------
     st.markdown("### ♻️ بازیابی از بکاپ")
     st.caption("فایل `.db` یا `.zip` (حاوی فایل `.db`) را آپلود کن. قبل از جایگزینی، از دیتابیس فعلی بکاپ گرفته می‌شود.")
     up_restore = st.file_uploader("انتخاب فایل بکاپ برای بازیابی", type=["db","zip"], key="restore_uploader")
@@ -841,6 +765,8 @@ def db_download_ui(db_path: str = DB_PATH):
         if len(data) == 0:
             st.error("فایل خالی است.")
             return
+
+        # اگر zip بود، استخراج اولین .db
         if up_restore.name.lower().endswith(".zip"):
             extracted = extract_db_from_zip(data)
             if not extracted:
@@ -848,6 +774,7 @@ def db_download_ui(db_path: str = DB_PATH):
                 return
             data = extracted
 
+        # ذخیره موقت و اعتبارسنجی
         tmp_path = "_restore_tmp.db"
         try:
             with open(tmp_path, "wb") as f:
@@ -862,6 +789,7 @@ def db_download_ui(db_path: str = DB_PATH):
             st.error(f"اعتبارسنجی بکاپ ناموفق بود: {msg}")
             return
 
+        # بکاپ گرفتن از فعلی
         try:
             ts2 = datetime.now().strftime("%Y%m%d_%H%M%S")
             backup_name = f"crm_before_restore_{ts2}.db"
@@ -869,6 +797,7 @@ def db_download_ui(db_path: str = DB_PATH):
         except Exception as e:
             st.warning(f"نتوانستم از دیتابیس فعلی بکاپ بگیرم: {e}")
 
+        # جایگزینی اتمیک تا حد ممکن
         try:
             os.replace(tmp_path, DB_PATH)
         except Exception as e:
@@ -1030,6 +959,7 @@ def dlg_quick_call(user_id: int):
                 return
             create_call(user_id, datetime.combine(d, t), status, desc, current_user_id())
             st.toast("تماس ثبت شد. حالا پیگیری را ثبت کن.", icon="✅")
+            # ✅ (2) هدایت به فرم ثبت پیگیری برای همان کاربر
             st.session_state["open_fu_after_call_user_id"] = user_id
             st.rerun()
 
@@ -1481,12 +1411,14 @@ def page_users():
     name_to_id = dict(zip(id_map["full_name"], id_map["id"]))
     df_all["user_id"] = df_all["نام_کامل"].map(name_to_id)
 
-    # ستون‌هایی که می‌خواهیم نشان دهیم
+    # ✅ (5) ستون‌های «تاریخ_ایجاد» و «حوزه_فعالیت» نمایش داده نشوند
+    # ✅ (3) ستون «پیگیری_باز_دارد» به‌صورت «ندارد / تاریخ آخرین پیگیری باز» نمایش داده شود
     show_cols = ["نام","نام_خانوادگی","شرکت","تلفن","وضعیت_کاربر","سطح_کاربر","آخرین_تماس","استان","وضعیت_پیگیری_باز","کارشناس_فروش"]
     show_cols = [c for c in show_cols if c in df_all.columns]
+
     base = df_all[show_cols + ["user_id"]].copy()
 
-    # ستون‌های انتخاب/اکشن
+    # 👇 ستون‌های انتخاب/اکشن
     base["✅ انتخاب"] = False
     base["👁 نمایش"] = False
     base["✏ ویرایش"] = False
@@ -1572,6 +1504,7 @@ def page_users():
         if states[3] and not p[3]: dlg_quick_followup(uid)
     st.session_state["users_actions_prev"] = curr
 
+    # ✅ (2) اگر تماس ثبت شد، فوراً دیالوگ پیگیری همان کاربر را باز کن
     if st.session_state.get("open_fu_after_call_user_id"):
         uid_to_open = int(st.session_state["open_fu_after_call_user_id"])
         del st.session_state["open_fu_after_call_user_id"]
@@ -1648,6 +1581,8 @@ def page_followups():
     df = df_followups_by_filters(name_q, st_statuses, start_date, end_date,
                                  owner_ids_filter if owner_ids_filter else None, only_owner)
 
+    # ✅ (4) امکان تغییر وضعیت پیگیری از داخل جدول
+    # نسخه «قبل از ویرایش» را نگه می‌داریم تا تغییرات را تشخیص دهیم
     original_df = df.copy()
     colcfg = {
         "وضعیت": st.column_config.SelectboxColumn("وضعیت", options=TASK_STATUSES, required=True, help="برای تغییر وضعیت کلیک کنید")
@@ -1658,6 +1593,7 @@ def page_followups():
         hide_index=True
     )
 
+    # اعمال تغییر وضعیت‌ها
     try:
         if "ID" in edited_df.columns and "وضعیت" in edited_df.columns:
             merged = edited_df[["ID","وضعیت"]].merge(original_df[["ID","وضعیت"]], on="ID", suffixes=("_new","_old"))
