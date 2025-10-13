@@ -373,6 +373,29 @@ def clear_url_token():
         except Exception:
             pass
 
+# ====================== Auto-login از روی توکن URL ======================
+def try_autologin_from_url_token():
+    """
+    اگر ?t=<token> در URL باشد و نشست فعال نباشد، کاربر را به‌طور خودکار لاگین می‌کند.
+    - توکن از جدول sessions اعتبارسنجی می‌شود.
+    - در صورت معتبر بودن، کلیدهای 'auth' و 'sess_token' در session_state ست می‌شوند.
+    """
+    # اگر از قبل لاگین هستیم، هیچ کاری نکن
+    if st.session_state.get("auth"):
+        return
+
+    token = get_url_token()
+    if not token:
+        return
+
+    info = get_session_user(token)
+    if not info:
+        return
+
+    # ست‌کردن نشست
+    st.session_state.auth = info
+    st.session_state.sess_token = token
+
 # ====================== CRUD و بقیه کدهای شما ======================
 # (تمام همان توابع و صفحات که در کد فرستاده بودی؛ بدون تغییر)
 # --- از اینجا به بعد همان کدی است که خودت فرستادی (df_* ، dialogها، صفحات و ... ) ---
