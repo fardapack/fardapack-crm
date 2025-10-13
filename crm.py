@@ -102,6 +102,20 @@ def dt_to_jalali_str(dt_iso_or_none: Optional[str]) -> str:
     except Exception:
         return dt_iso_or_none
 
+def plain_date_to_jalali_str(maybe_date: str) -> str:
+    """
+    🛠️ مبدل مقاوم برای تاریخ‌های ستونی (مانند due_date):
+    - 'YYYY-MM-DD' → 'YYYY/MM/DD' (شمسی)
+    - اگر فرمت دیگری بود، همان را برمی‌گرداند
+    """
+    if not maybe_date:
+        return ""
+    try:
+        d = datetime.strptime(str(maybe_date).strip(), "%Y-%m-%d").date()
+        return date_to_jalali_str(d)
+    except Exception:
+        return str(maybe_date)
+
 # ====================== ثوابت و DB ======================
 DB_PATH = "crm.db"
 CALL_STATUSES = ["ناموفق", "موفق", "خاموش", "رد تماس"]
@@ -500,6 +514,7 @@ def df_users_advanced(first_q, last_q, created_from, created_to,
         u.created_at AS تاریخ_ایجاد,
         (SELECT MAX(call_datetime) FROM calls cl WHERE cl.user_id=u.id) AS آخرین_تماس,
         EXISTS(SELECT 1 FROM followups f WHERE f.user_id=u.id AND f.status='در حال انجام') AS پیگیری_باز_دارد,
+        (SELECT MAX(f2.due_date) FROM followups f2 WHERE f2.user_id=u.id AND f2.status='در حال انجام') AS آخرین_پیگیری_باز,
         COALESCE(au.username,'') AS کارشناس_فروش
       FROM users u
       LEFT JOIN companies c ON c.id=u.company_id
@@ -508,6 +523,7 @@ def df_users_advanced(first_q, last_q, created_from, created_to,
       ORDER BY u.created_at DESC, u.id DESC
     """, conn, params=params)
 
+    # فیلترها
     if has_open_task is not None:
         df = df[df["پیگیری_باز_دارد"] == (1 if has_open_task else 0)]
     if last_call_from:
@@ -515,10 +531,19 @@ def df_users_advanced(first_q, last_q, created_from, created_to,
     if last_call_to:
         df = df[(df["آخرین_تماس"].notna()) & (pd.to_datetime(df["آخرین_تماس"]).dt.date <= last_call_to)]
 
+    # تبدیل تاریخ‌ها
     if "تاریخ_ایجاد" in df.columns:
         df["تاریخ_ایجاد"] = df["تاریخ_ایجاد"].apply(dt_to_jalali_str)
     if "آخرین_تماس" in df.columns:
         df["آخرین_تماس"] = df["آخرین_تماس"].apply(dt_to_jalali_str)
+
+    # 👇 نمایش سفارشی برای «پیگیری_باز_دارد»
+    def _open_followup_display(row):
+        if int(row.get("پیگیری_باز_دارد", 0)) == 0 or pd.isna(row.get("آخرین_پیگیری_باز")):
+            return "ندارد"
+        return plain_date_to_jalali_str(row.get("آخرین_پیگیری_باز"))
+
+    df["وضعیت_پیگیری_باز"] = df.apply(_open_followup_display, axis=1)
 
     conn.close(); return df
 
@@ -573,57 +598,10 @@ def df_followups_by_filters(name_query, statuses, start, end,
         ORDER BY f.due_date DESC, f.id DESC
     """, conn, params=params)
 
+    # ✅ نمایش تاریخ پیگیری با همان فرمت ثبت (شمسی)
     if "تاریخ_پیگیری" in df.columns:
-        df["تاریخ_پیگیری"] = df["تاریخ_پیگیری"].apply(lambda x: date_to_jalali_str(datetime.strptime(x, "%Y-%m-%d").date()) if x else "")
-    conn.close(); return df
+        df["تاریخ_پیگیری"] = df["تاریخ_پیگیری"].apply(plain_date_to_jalali_str)
 
-# ======= ✅ برگردانده شد: لیست شرکت‌ها برای صفحه «شرکت‌ها» =======
-def df_companies_advanced(name_q, statuses, levels, created_from, created_to, has_open,
-                          owner_ids_filter: Optional[List[int]], enforce_owner: Optional[int]):
-    conn = get_conn(); params, where = [], []
-    if name_q: where.append("c.name LIKE ?"); params.append(f"%{name_q.strip()}%")
-    if statuses: where.append("c.status IN (" + ",".join(["?"]*len(statuses)) + ")"); params += statuses
-    if levels:   where.append("c.level IN (" + ",".join(["?"]*len(levels)) + ")");   params += levels
-    if created_from: where.append("date(c.created_at) >= ?"); params.append(created_from.isoformat())
-    if created_to:   where.append("date(c.created_at) <= ?"); params.append(created_to.isoformat())
-
-    if enforce_owner:
-        where.append("""EXISTS(SELECT 1 FROM users ux WHERE ux.company_id=c.id AND ux.owner_id=?)""")
-        params.append(enforce_owner)
-
-    if owner_ids_filter:
-        placeholders = ",".join(["?"]*len(owner_ids_filter))
-        where.append(f"""EXISTS(SELECT 1 FROM users ux WHERE ux.company_id=c.id AND ux.owner_id IN ({placeholders}))""")
-        params += owner_ids_filter
-
-    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-
-    df = pd.read_sql_query(f"""
-        SELECT
-          c.id AS ID,
-          c.name AS نام_شرکت,
-          COALESCE(c.phone,'') AS تلفن,
-          COALESCE(c.status,'') AS وضعیت_شرکت,
-          COALESCE(c.level,'') AS سطح_شرکت,
-          c.created_at AS تاریخ_ایجاد,
-          EXISTS(
-            SELECT 1 FROM users u JOIN followups f ON f.user_id=u.id
-            WHERE u.company_id=c.id AND f.status='در حال انجام'
-          ) AS پیگیری_باز_دارد,
-          COALESCE((SELECT GROUP_CONCAT(x.username, '، ')
-                    FROM (SELECT DISTINCT au.username AS username
-                          FROM users ux
-                          LEFT JOIN app_users au ON au.id=ux.owner_id
-                          WHERE ux.company_id=c.id AND au.username IS NOT NULL) AS x), '') AS کارشناس_فروش
-        FROM companies c
-        {where_sql}
-        ORDER BY c.name COLLATE NOCASE;
-    """, conn, params=params)
-
-    if has_open is not None:
-        df = df[df["پیگیری_باز_دارد"] == (1 if has_open else 0)]
-    if "تاریخ_ایجاد" in df.columns:
-        df["تاریخ_ایجاد"] = df["تاریخ_ایجاد"].apply(dt_to_jalali_str)
     conn.close(); return df
 
 # ====================== احراز هویت ======================
@@ -895,7 +873,7 @@ def dlg_profile(user_id: int):
         """, conn, params=(user_id,))
         conn.close()
         if "تاریخ_پیگیری" in dff.columns:
-            dff["تاریخ_پیگیری"] = dff["تاریخ_پیگیری"].apply(lambda x: date_to_jalali_str(datetime.strptime(x, "%Y-%m-%d").date()) if x else "")
+            dff["تاریخ_پیگیری"] = dff["تاریخ_پیگیری"].apply(plain_date_to_jalali_str)
         st.dataframe(dff, use_container_width=True)
 
     with tabs[3]:
@@ -922,7 +900,6 @@ def dlg_edit_user(user_id: int):
         SELECT first_name,last_name,phone,role,company_id,note,status,domain,province,level,owner_id
         FROM users WHERE id=?;""", (user_id,)).fetchone()
 
-    # ✅ اصلاح: ساخت دیکشنری‌ها بدون list comprehension با خروجی ناخواسته
     companies = list_companies(None)
     comp_map: Dict[str, Optional[int]] = {"— بدون شرکت —": None}
     comp_map.update({n: i for i, n in companies})
@@ -981,7 +958,10 @@ def dlg_quick_call(user_id: int):
                 st.warning("فرمت تاریخ صحیح نیست.")
                 return
             create_call(user_id, datetime.combine(d, t), status, desc, current_user_id())
-            st.toast("تماس ثبت شد.", icon="✅")
+            st.toast("تماس ثبت شد. حالا پیگیری را ثبت کن.", icon="✅")
+            # ✅ (2) هدایت به فرم ثبت پیگیری برای همان کاربر
+            st.session_state["open_fu_after_call_user_id"] = user_id
+            st.rerun()
 
 @st.dialog("ثبت پیگیری سریع")
 def dlg_quick_followup(user_id: int):
@@ -1064,7 +1044,7 @@ def dlg_company_view(company_id: int):
     with tabs[3]:
         dfu = pd.read_sql_query("""
           SELECT f.id AS ID, u.full_name AS نام‌کاربر, f.title AS عنوان,
-                 COALESCE(f.details,'') AS جزئیات, f.due_date AS تاریخ‌_پیگیری,
+                 COALESCE(f.details,'') AS جزئیات, f.due_date AS تاریخ_پیگیری,
                  f.status AS وضعیت, COALESCE(au.username,'') AS کارشناس‌فروش
           FROM followups f
           JOIN users u ON u.id=f.user_id
@@ -1072,8 +1052,8 @@ def dlg_company_view(company_id: int):
           WHERE u.company_id=?
           ORDER BY f.due_date DESC, f.id DESC;
         """, conn, params=(company_id,))
-        if "تاریخ‌_پیگیری" in dfu.columns:
-            dfu["تاریخ‌_پیگیری"] = dfu["تاریخ‌_پیگیری"].apply(lambda x: date_to_jalali_str(datetime.strptime(x, "%Y-%m-%d").date()) if x else "")
+        if "تاریخ_پیگیری" in dfu.columns:
+            dfu["تاریخ_پیگیری"] = dfu["تاریخ_پیگیری"].apply(plain_date_to_jalali_str)
         st.dataframe(dfu, use_container_width=True)
     conn.close()
 
@@ -1431,15 +1411,14 @@ def page_users():
     name_to_id = dict(zip(id_map["full_name"], id_map["id"]))
     df_all["user_id"] = df_all["نام_کامل"].map(name_to_id)
 
-    # ستون‌های مرتب‌شده برای نمایش
-    ordered = ["نام","نام_خانوادگی","شرکت","تلفن","وضعیت_کاربر","سطح_کاربر","آخرین_تماس","حوزه_فعالیت","استان","پیگیری_باز_دارد","کارشناس_فروش"]
-    ordered = [c for c in ordered if c in df_all.columns]
+    # ✅ (5) ستون‌های «تاریخ_ایجاد» و «حوزه_فعالیت» نمایش داده نشوند
+    # ✅ (3) ستون «پیگیری_باز_دارد» به‌صورت «ندارد / تاریخ آخرین پیگیری باز» نمایش داده شود
+    show_cols = ["نام","نام_خانوادگی","شرکت","تلفن","وضعیت_کاربر","سطح_کاربر","آخرین_تماس","استان","وضعیت_پیگیری_باز","کارشناس_فروش"]
+    show_cols = [c for c in show_cols if c in df_all.columns]
 
-    base = df_all[ordered + ["user_id","תاریخ_ایجاد" if "תاریخ_ایجاد" in df_all.columns else "تاریخ_ایجاد"]].copy()
-    if "تاریخ_ایجاد" in base.columns and "تاریخ_ایجاد" not in ordered:
-        base.insert(5, "تاریخ_ایجاد", base.pop("تاریخ_ایجاد"))
+    base = df_all[show_cols + ["user_id"]].copy()
 
-    # 👇 ستون انتخاب برای عملیات گروهی + اکشن‌های تکی
+    # 👇 ستون‌های انتخاب/اکشن
     base["✅ انتخاب"] = False
     base["👁 نمایش"] = False
     base["✏ ویرایش"] = False
@@ -1525,6 +1504,12 @@ def page_users():
         if states[3] and not p[3]: dlg_quick_followup(uid)
     st.session_state["users_actions_prev"] = curr
 
+    # ✅ (2) اگر تماس ثبت شد، فوراً دیالوگ پیگیری همان کاربر را باز کن
+    if st.session_state.get("open_fu_after_call_user_id"):
+        uid_to_open = int(st.session_state["open_fu_after_call_user_id"])
+        del st.session_state["open_fu_after_call_user_id"]
+        dlg_quick_followup(uid_to_open)
+
 def page_calls():
     only_owner = None if is_admin() else current_user_id()
     st.subheader("ثبت تماس‌ها")
@@ -1595,7 +1580,33 @@ def page_followups():
     end_date   = jalali_str_to_date(end_j) if end_j else None
     df = df_followups_by_filters(name_q, st_statuses, start_date, end_date,
                                  owner_ids_filter if owner_ids_filter else None, only_owner)
-    st.dataframe(df, use_container_width=True)
+
+    # ✅ (4) امکان تغییر وضعیت پیگیری از داخل جدول
+    # نسخه «قبل از ویرایش» را نگه می‌داریم تا تغییرات را تشخیص دهیم
+    original_df = df.copy()
+    colcfg = {
+        "وضعیت": st.column_config.SelectboxColumn("وضعیت", options=TASK_STATUSES, required=True, help="برای تغییر وضعیت کلیک کنید")
+    }
+    edited_df = st.data_editor(
+        df, use_container_width=True, key="followups_editor_widget",
+        column_config=colcfg,
+        hide_index=True
+    )
+
+    # اعمال تغییر وضعیت‌ها
+    try:
+        if "ID" in edited_df.columns and "وضعیت" in edited_df.columns:
+            merged = edited_df[["ID","وضعیت"]].merge(original_df[["ID","وضعیت"]], on="ID", suffixes=("_new","_old"))
+            changed = merged[merged["وضعیت_new"] != merged["وضعیت_old"]]
+            any_change = False
+            for _, row in changed.iterrows():
+                update_followup_status(int(row["ID"]), str(row["وضعیت_new"]))
+                any_change = True
+            if any_change:
+                st.toast("وضعیت پیگیری‌ها به‌روزرسانی شد.", icon="🔄")
+                st.rerun()
+    except Exception:
+        pass
 
 def page_access():
     if not is_admin():
