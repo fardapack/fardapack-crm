@@ -573,18 +573,18 @@ def df_companies_advanced(q_name, f_status, f_level, created_from, created_to,
 
     df = pd.read_sql_query(f"""
       SELECT
-        c.id AS ID,
-        c.name AS نام_شرکت,
-        COALESCE(c.phone,'') AS تلفن,
-        COALESCE(c.status,'') AS وضعیت_شرکت,
-        COALESCE(c.level,'') AS سطح_شرکت,
-        c.created_at AS تاریخ_ایجاد,
+        c.id AS "ID",
+        c.name AS "نام_شرکت",
+        COALESCE(c.phone,'') AS "تلفن",
+        COALESCE(c.status,'') AS "وضعیت_شرکت",
+        COALESCE(c.level,'') AS "سطح_شرکت",
+        c.created_at AS "تاریخ_ایجاد",
         EXISTS(SELECT 1 FROM users u JOIN followups f ON f.user_id=u.id 
-               WHERE u.company_id=c.id AND f.status='در حال انجام') AS پیگیری_باز_دارد,
+               WHERE u.company_id=c.id AND f.status='در حال انجام') AS "پیگیری_باز_دارد",
         (SELECT GROUP_CONCAT(DISTINCT au.username, '، ') 
          FROM users u 
          LEFT JOIN app_users au ON au.id=u.owner_id 
-         WHERE u.company_id=c.id AND au.username IS NOT NULL) AS کارشناس_فروش
+         WHERE u.company_id=c.id AND au.username IS NOT NULL) AS "کارشناس_فروش"
       FROM companies c
       {where_sql}
       ORDER BY c.created_at DESC, c.id DESC
@@ -624,21 +624,21 @@ def df_users_advanced(first_q, last_q, created_from, created_to,
 
     df = pd.read_sql_query(f"""
       SELECT
-        u.id AS ID,
-        u.first_name AS نام,
-        u.last_name AS نام_خانوادگی,
-        u.full_name AS نام_کامل,
-        COALESCE(c.name,'') AS شرکت,
-        COALESCE(u.phone,'') AS تلفن,
-        COALESCE(u.status,'') AS وضعیت_کاربر,
-        COALESCE(u.level,'') AS سطح_کاربر,
-        COALESCE(u.domain,'') AS حوزه_فعالیت,
-        COALESCE(u.province,'') AS استان,
-        u.created_at AS تاریخ_ایجاد,
-        (SELECT MAX(call_datetime) FROM calls cl WHERE cl.user_id=u.id) AS آخرین_تماس,
-        EXISTS(SELECT 1 FROM followups f WHERE f.user_id=u.id AND f.status='در حال انجام') AS پیگیری_باز_دارد,
-        (SELECT MAX(f2.due_date) FROM followups f2 WHERE f2.user_id=u.id AND f2.status='در حال انجام') AS آخرین_پیگیری_باز,
-        COALESCE(au.username,'') AS کارشناس_فروش
+        u.id AS "ID",
+        u.first_name AS "نام",
+        u.last_name AS "نام_خانوادگی",
+        u.full_name AS "نام_کامل",
+        COALESCE(c.name,'') AS "شرکت",
+        COALESCE(u.phone,'') AS "تلفن",
+        COALESCE(u.status,'') AS "وضعیت_کاربر",
+        COALESCE(u.level,'') AS "سطح_کاربر",
+        COALESCE(u.domain,'') AS "حوزه_فعالیت",
+        COALESCE(u.province,'') AS "استان",
+        u.created_at AS "تاریخ_ایجاد",
+        (SELECT MAX(call_datetime) FROM calls cl WHERE cl.user_id=u.id) AS "آخرین_تماس",
+        EXISTS(SELECT 1 FROM followups f WHERE f.user_id=u.id AND f.status='در حال انجام') AS "پیگیری_باز_دارد",
+        (SELECT MAX(f2.due_date) FROM followups f2 WHERE f2.user_id=u.id AND f2.status='در حال انجام') AS "آخرین_پیگیری_باز",
+        COALESCE(au.username,'') AS "کارشناس_فروش"
       FROM users u
       LEFT JOIN companies c ON c.id=u.company_id
       LEFT JOIN app_users au ON au.id=u.owner_id
@@ -682,9 +682,9 @@ def df_calls_by_filters(name_query, statuses, start, end,
     if owner_ids_filter: where.append("u.owner_id IN (" + ",".join(["?"]*len(owner_ids_filter)) + ")"); params += owner_ids_filter
 
     df = pd.read_sql_query(f"""
-        SELECT cl.id AS ID, u.full_name AS نام_کاربر, COALESCE(c.name,'') AS شرکت,
-               cl.call_datetime AS تاریخ_و_زمان, cl.status AS وضعیت, COALESCE(cl.description,'') AS توضیحات,
-               COALESCE(au.username,'') AS کارشناس_فروش
+        SELECT cl.id AS "ID", u.full_name AS "نام_کاربر", COALESCE(c.name,'') AS "شرکت",
+               cl.call_datetime AS "تاریخ_و_زمان", cl.status AS "وضعیت", COALESCE(cl.description,'') AS "توضیحات",
+               COALESCE(au.username,'') AS "کارشناس_فروش"
         FROM calls cl
         JOIN users u ON u.id=cl.user_id
         LEFT JOIN companies c ON c.id=u.company_id
@@ -709,10 +709,10 @@ def df_followups_by_filters(name_query, statuses, start, end,
     if owner_ids_filter: where.append("u.owner_id IN (" + ",".join(["?"]*len(owner_ids_filter)) + ")"); params += owner_ids_filter
 
     df = pd.read_sql_query(f"""
-        SELECT f.id AS ID, u.full_name AS نام_کاربر, COALESCE(c.name,'') AS شرکت,
-               f.title AS عنوان, COALESCE(f.details,'') AS جزئیات,
-               f.due_date AS تاریخ_پیگیری, f.status AS وضعیت,
-               COALESCE(au.username,'') AS کارشناس_فروش
+        SELECT f.id AS "ID", u.full_name AS "نام_کاربر", COALESCE(c.name,'') AS "شرکت",
+               f.title AS "عنوان", COALESCE(f.details,'') AS "جزئیات",
+               f.due_date AS "تاریخ_پیگیری", f.status AS "وضعیت",
+               COALESCE(au.username,'') AS "کارشناس_فروش"
         FROM followups f
         JOIN users u ON u.id=f.user_id
         LEFT JOIN companies c ON c.id=u.company_id
