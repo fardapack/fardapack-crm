@@ -10,15 +10,8 @@ FardaPack Mini-CRM — Streamlit + SQLite (Streamlit 1.50 friendly)
 - 📥 ایمپورت اکسل مخاطبین در صفحه کاربران
 - ✅ عملیات گروهی در صفحه کاربران (تغییر کارشناس فروشِ چندتایی)
 - ♻️ بازیابی دیتابیس از بکاپ (.db یا .zip)
-- ✨ به‌روزرسانی‌ها:
-   1) رفع عدم نمایش تاریخ پیگیری و نمایش دقیق تاریخ‌های ثبت‌شده به‌صورت شمسی
-   2) در صفحه کاربران، پس از «ثبت تماس»، فرم «ثبت پیگیری» همان شخص بلافاصله باز می‌شود
-   3) ستون «پیگیری باز دارد» اکنون تاریخ آخرین پیگیریِ در حال انجام یا «ندارد» را نشان می‌دهد
-   4) امکان تغییر وضعیت پیگیری‌ها مستقیم در جدول پیگیری‌ها
-   5) ستون‌های «تاریخ ایجاد» و «حوزه فعالیت» از جدول کاربران پنهان شدند
-   6) دکمه‌های اقدام جدول کاربران به دکمه‌های آیکنی تبدیل شدند
-   7) دسته‌بندی «لغو» به وضعیت کاربران افزوده شد
 """
+
 import sqlite3
 from datetime import datetime, date, timedelta
 from typing import Optional, List, Tuple, Dict
@@ -28,6 +21,7 @@ import streamlit as st
 import hashlib
 import uuid
 
+# 👇 اضافه شد
 import os, io, zipfile, shutil
 
 # ====================== صفحه و CSS ======================
@@ -89,40 +83,30 @@ def date_to_jalali_str(d: date) -> str:
         return ""
 
 def dt_to_jalali_str(dt_iso_or_none: Optional[str]) -> str:
-    """yyyy-mm-dd[ hh:mm[:ss]] → 'YYYY/MM/DD HH:MM' شمسی (بدون دستکاری تایم‌زون؛ دقیقا زمان ذخیره‌شده)"""
+    """yyyy-mm-dd[ hh:mm[:ss]] → 'YYYY/MM/DD HH:MM' شمسی"""
     if not dt_iso_or_none or not _jalali_supported():
         return dt_iso_or_none or ""
     try:
-        raw = dt_iso_or_none.strip()
-        formats = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"]
-        gdt = None
-        for fmt in formats:
+        if "T" in dt_iso_or_none:
+            gdt = datetime.fromisoformat(dt_iso_or_none)
+        else:
             try:
-                gdt = datetime.strptime(raw, fmt); break
+                gdt = datetime.strptime(dt_iso_or_none, "%Y-%m-%d %H:%M:%S")
             except ValueError:
-                continue
-        if gdt is None:
-            gdt = datetime.fromisoformat(raw)
+                try:
+                    gdt = datetime.strptime(dt_iso_or_none, "%Y-%m-%d %H:%M")
+                except ValueError:
+                    gdt = datetime.strptime(dt_iso_or_none, "%Y-%m-%d")
         jdt = JalaliDateTime.fromgregorian(datetime=gdt)
-        if len(raw) == 10:
-            return jdt.strftime("%Y/%m/%d")
         return jdt.strftime("%Y/%m/%d %H:%M")
     except Exception:
-        return dt_iso_or_none or ""
-
-def safe_parse_iso_date(dtxt: Optional[str]) -> Optional[date]:
-    if not dtxt:
-        return None
-    try:
-        return datetime.strptime(str(dtxt)[:10], "%Y-%m-%d").date()
-    except Exception:
-        return None
+        return dt_iso_or_none
 
 # ====================== ثوابت و DB ======================
 DB_PATH = "crm.db"
 CALL_STATUSES = ["ناموفق", "موفق", "خاموش", "رد تماس"]
 TASK_STATUSES = ["در حال انجام", "پایان یافته"]
-USER_STATUSES = ["بدون وضعیت", "در حال پیگیری", "پیش فاکتور", "مشتری شد", "لغو"]
+USER_STATUSES = ["بدون وضعیت", "در حال پیگیری", "پیش فاکتور", "مشتری شد"]
 COMPANY_STATUSES = ["بدون وضعیت", "در حال پیگیری", "پیش فاکتور", "مشتری شد"]
 LEVELS = ["هیچکدام", "طلایی", "نقره‌ای", "برنز"]
 
@@ -288,6 +272,7 @@ def delete_session(token: str):
     conn.commit(); conn.close()
 
 def set_url_token(token: str):
+    # Streamlit 1.50
     try:
         qp = st.query_params
         qp["t"] = token
@@ -425,17 +410,18 @@ def update_followup_status(task_id: int, new_status: str):
 def create_call(user_id, call_dt: datetime, status, description, creator_id):
     conn = get_conn()
     conn.execute("INSERT INTO calls (user_id, call_datetime, status, description, created_by) VALUES (?,?,?,?,?);",
-                 (user_id, call_dt.strftime("%Y-%m-%d %H:%M"), status, (description or "").strip(), creator_id))
+                 (user_id, call_dt.isoformat(timespec="minutes"), status, (description or "").strip(), creator_id))
     conn.commit(); conn.close()
 
 def create_followup(user_id, title, details, due_date_val: date, status, creator_id):
     conn = get_conn()
     conn.execute("INSERT INTO followups (user_id, title, details, due_date, status, created_by) VALUES (?,?,?,?,?,?);",
-                 (user_id, (title or "").strip(), (details or "").strip(), due_date_val.strftime("%Y-%m-%d"), status, creator_id))
+                 (user_id, (title or "").strip(), (details or "").strip(), due_date_val.isoformat(), status, creator_id))
     conn.commit(); conn.close()
 
 # ======= 🧰 عملیات گروهی روی کاربران (Bulk) =======
 def bulk_update_users_owner(user_ids: List[int], new_owner_id: Optional[int]) -> int:
+    """owner_id را برای لیست user_ids به‌صورت گروهی تغییر می‌دهد. مقدار برگشتی تعداد ردیف‌های تغییر کرده است."""
     if not user_ids:
         return 0
     conn = get_conn()
@@ -513,7 +499,7 @@ def df_users_advanced(first_q, last_q, created_from, created_to,
         COALESCE(u.province,'') AS استان,
         u.created_at AS تاریخ_ایجاد,
         (SELECT MAX(call_datetime) FROM calls cl WHERE cl.user_id=u.id) AS آخرین_تماس,
-        (SELECT MAX(f.due_date) FROM followups f WHERE f.user_id=u.id AND f.status='در حال انجام') AS آخرین_پیگیری_باز,
+        EXISTS(SELECT 1 FROM followups f WHERE f.user_id=u.id AND f.status='در حال انجام') AS پیگیری_باز_دارد,
         COALESCE(au.username,'') AS کارشناس_فروش
       FROM users u
       LEFT JOIN companies c ON c.id=u.company_id
@@ -523,11 +509,7 @@ def df_users_advanced(first_q, last_q, created_from, created_to,
     """, conn, params=params)
 
     if has_open_task is not None:
-        if has_open_task:
-            df = df[df["آخرین_پیگیری_باز"].notna()]
-        else:
-            df = df[df["آخرین_پیگیری_باز"].isna()]
-
+        df = df[df["پیگیری_باز_دارد"] == (1 if has_open_task else 0)]
     if last_call_from:
         df = df[(df["آخرین_تماس"].notna()) & (pd.to_datetime(df["آخرین_تماس"]).dt.date >= last_call_from)]
     if last_call_to:
@@ -537,12 +519,6 @@ def df_users_advanced(first_q, last_q, created_from, created_to,
         df["تاریخ_ایجاد"] = df["تاریخ_ایجاد"].apply(dt_to_jalali_str)
     if "آخرین_تماس" in df.columns:
         df["آخرین_تماس"] = df["آخرین_تماس"].apply(dt_to_jalali_str)
-
-    def _open_fu_display(x):
-        d = safe_parse_iso_date(x)
-        return date_to_jalali_str(d) if d else "ندارد"
-    df["پیگیری_باز_دارد"] = df["آخرین_پیگیری_باز"].apply(_open_fu_display)
-    df.drop(columns=["آخرین_پیگیری_باز"], inplace=True)
 
     conn.close(); return df
 
@@ -597,11 +573,57 @@ def df_followups_by_filters(name_query, statuses, start, end,
         ORDER BY f.due_date DESC, f.id DESC
     """, conn, params=params)
 
-    def _to_jalali_date_txt(x):
-        d = safe_parse_iso_date(x)
-        return date_to_jalali_str(d) if d else ""
     if "تاریخ_پیگیری" in df.columns:
-        df["تاریخ_پیگیری"] = df["تاریخ_پیگیری"].apply(_to_jalali_date_txt)
+        df["تاریخ_پیگیری"] = df["تاریخ_پیگیری"].apply(lambda x: date_to_jalali_str(datetime.strptime(x, "%Y-%m-%d").date()) if x else "")
+    conn.close(); return df
+
+# ======= ✅ برگردانده شد: لیست شرکت‌ها برای صفحه «شرکت‌ها» =======
+def df_companies_advanced(name_q, statuses, levels, created_from, created_to, has_open,
+                          owner_ids_filter: Optional[List[int]], enforce_owner: Optional[int]):
+    conn = get_conn(); params, where = [], []
+    if name_q: where.append("c.name LIKE ?"); params.append(f"%{name_q.strip()}%")
+    if statuses: where.append("c.status IN (" + ",".join(["?"]*len(statuses)) + ")"); params += statuses
+    if levels:   where.append("c.level IN (" + ",".join(["?"]*len(levels)) + ")");   params += levels
+    if created_from: where.append("date(c.created_at) >= ?"); params.append(created_from.isoformat())
+    if created_to:   where.append("date(c.created_at) <= ?"); params.append(created_to.isoformat())
+
+    if enforce_owner:
+        where.append("""EXISTS(SELECT 1 FROM users ux WHERE ux.company_id=c.id AND ux.owner_id=?)""")
+        params.append(enforce_owner)
+
+    if owner_ids_filter:
+        placeholders = ",".join(["?"]*len(owner_ids_filter))
+        where.append(f"""EXISTS(SELECT 1 FROM users ux WHERE ux.company_id=c.id AND ux.owner_id IN ({placeholders}))""")
+        params += owner_ids_filter
+
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    df = pd.read_sql_query(f"""
+        SELECT
+          c.id AS ID,
+          c.name AS نام_شرکت,
+          COALESCE(c.phone,'') AS تلفن,
+          COALESCE(c.status,'') AS وضعیت_شرکت,
+          COALESCE(c.level,'') AS سطح_شرکت,
+          c.created_at AS تاریخ_ایجاد,
+          EXISTS(
+            SELECT 1 FROM users u JOIN followups f ON f.user_id=u.id
+            WHERE u.company_id=c.id AND f.status='در حال انجام'
+          ) AS پیگیری_باز_دارد,
+          COALESCE((SELECT GROUP_CONCAT(x.username, '، ')
+                    FROM (SELECT DISTINCT au.username AS username
+                          FROM users ux
+                          LEFT JOIN app_users au ON au.id=ux.owner_id
+                          WHERE ux.company_id=c.id AND au.username IS NOT NULL) AS x), '') AS کارشناس_فروش
+        FROM companies c
+        {where_sql}
+        ORDER BY c.name COLLATE NOCASE;
+    """, conn, params=params)
+
+    if has_open is not None:
+        df = df[df["پیگیری_باز_دارد"] == (1 if has_open else 0)]
+    if "تاریخ_ایجاد" in df.columns:
+        df["تاریخ_ایجاد"] = df["تاریخ_ایجاد"].apply(dt_to_jalali_str)
     conn.close(); return df
 
 # ====================== احراز هویت ======================
@@ -674,6 +696,7 @@ def header_userbox():
     st.markdown(f"**کاربر:** {a['username']} — **نقش:** {role_label(a['role'])}")
     st.button("خروج", on_click=on_logout)
 
+# تلاش برای لاگین خودکار از URL
 init_db()
 try_autologin_from_url_token()
 
@@ -681,6 +704,7 @@ try_autologin_from_url_token()
 def extract_db_from_zip(zip_bytes: bytes) -> Optional[bytes]:
     try:
         with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
+            # اولین فایل .db
             for info in zf.infolist():
                 if info.filename.lower().endswith(".db"):
                     return zf.read(info)
@@ -692,16 +716,21 @@ def validate_db_file(path: str) -> Tuple[bool, str]:
     try:
         conn = sqlite3.connect(path, timeout=5)
         cur = conn.cursor()
+        # سلامت دیتابیس
         chk = cur.execute("PRAGMA integrity_check;").fetchone()
         if not chk or str(chk[0]).lower() != "ok":
-            conn.close(); return False, f"integrity_check ناموفق: {chk[0] if chk else 'نامشخص'}"
+            conn.close()
+            return False, f"integrity_check ناموفق: {chk[0] if chk else 'نامشخص'}"
+        # جداول ضروری
         required = {"companies","users","calls","followups","app_users","sessions"}
         rows = cur.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()
         have = {r[0] for r in rows}
         missing = required - have
         conn.close()
-        if missing and (missing - {"sessions"}):
-            return False, f"جدول(های) ضروری موجود نیست: {', '.join(sorted(missing))}"
+        if missing:
+            # اگر فقط sessions نبود، init_db بعداً آن را می‌سازد؛ ولی app_users/others ضروری‌اند
+            if missing - {"sessions"}:
+                return False, f"جدول(های) ضروری موجود نیست: {', '.join(sorted(missing))}"
         return True, "ok"
     except Exception as e:
         return False, str(e)
@@ -744,6 +773,7 @@ def db_download_ui(db_path: str = DB_PATH):
             use_container_width=True
         )
 
+    # ---------- ♻️ بازیابی از بکاپ ----------
     st.markdown("### ♻️ بازیابی از بکاپ")
     st.caption("فایل `.db` یا `.zip` (حاوی فایل `.db`) را آپلود کن. قبل از جایگزینی، از دیتابیس فعلی بکاپ گرفته می‌شود.")
     up_restore = st.file_uploader("انتخاب فایل بکاپ برای بازیابی", type=["db","zip"], key="restore_uploader")
@@ -751,29 +781,37 @@ def db_download_ui(db_path: str = DB_PATH):
     restore_confirm = st.checkbox("تایید می‌کنم که با بازیابی، دیتای فعلی جایگزین می‌شود و احتمالاً از حساب خارج می‌شوم.", value=False)
     if st.button("بازیابی", type="primary", use_container_width=True, disabled=(up_restore is None or not restore_confirm)):
         if up_restore is None:
-            st.warning("ابتدا فایل بکاپ را انتخاب کن."); return
+            st.warning("ابتدا فایل بکاپ را انتخاب کن.")
+            return
         data = up_restore.read() or b""
         if len(data) == 0:
-            st.error("فایل خالی است."); return
+            st.error("فایل خالی است.")
+            return
 
+        # اگر zip بود، استخراج اولین .db
         if up_restore.name.lower().endswith(".zip"):
             extracted = extract_db_from_zip(data)
             if not extracted:
-                st.error("در فایل ZIP هیچ فایل .db یافت نشد."); return
+                st.error("در فایل ZIP هیچ فایل .db یافت نشد.")
+                return
             data = extracted
 
+        # ذخیره موقت و اعتبارسنجی
         tmp_path = "_restore_tmp.db"
         try:
             with open(tmp_path, "wb") as f:
                 f.write(data)
         except Exception as e:
-            st.error(f"خطا در نوشتن فایل موقت: {e}"); return
+            st.error(f"خطا در نوشتن فایل موقت: {e}")
+            return
 
         ok, msg = validate_db_file(tmp_path)
         if not ok:
             os.remove(tmp_path)
-            st.error(f"اعتبارسنجی بکاپ ناموفق بود: {msg}"); return
+            st.error(f"اعتبارسنجی بکاپ ناموفق بود: {msg}")
+            return
 
+        # بکاپ گرفتن از فعلی
         try:
             ts2 = datetime.now().strftime("%Y%m%d_%H%M%S")
             backup_name = f"crm_before_restore_{ts2}.db"
@@ -781,6 +819,7 @@ def db_download_ui(db_path: str = DB_PATH):
         except Exception as e:
             st.warning(f"نتوانستم از دیتابیس فعلی بکاپ بگیرم: {e}")
 
+        # جایگزینی اتمیک تا حد ممکن
         try:
             os.replace(tmp_path, DB_PATH)
         except Exception as e:
@@ -792,7 +831,7 @@ def db_download_ui(db_path: str = DB_PATH):
                 pass
             return
 
-        st.success("بازیابی با موفقیت انجام شد. برنامه ری‌ران می‌شود. 🔁")
+        st.success("بازیابی با موفقیت انجام شد. برنامه ری‌ران می‌شود تا اسکیمای لازم هم اعمال شود (ممکن است لازم باشد دوباره وارد شوید). 🔁")
         st.rerun()
 
 # ====================== دیالوگ‌ها: کاربران ======================
@@ -810,7 +849,8 @@ def dlg_profile(user_id: int):
     """, (user_id,)).fetchone()
     conn.close()
     if not u:
-        st.warning("کاربر یافت نشد."); return
+        st.warning("کاربر یافت نشد.")
+        return
 
     tabs = st.tabs(["اطلاعات کاربر", "تماس‌ها", "پیگیری‌ها", "هم‌شرکتی‌ها"])
     with tabs[0]:
@@ -855,13 +895,14 @@ def dlg_profile(user_id: int):
         """, conn, params=(user_id,))
         conn.close()
         if "تاریخ_پیگیری" in dff.columns:
-            dff["تاریخ_پیگیری"] = dff["تاریخ_پیگیری"].apply(lambda x: date_to_jalali_str(safe_parse_iso_date(x)) if x else "")
+            dff["تاریخ_پیگیری"] = dff["تاریخ_پیگیری"].apply(lambda x: date_to_jalali_str(datetime.strptime(x, "%Y-%m-%d").date()) if x else "")
         st.dataframe(dff, use_container_width=True)
 
     with tabs[3]:
         company_id = u[13]
         if not company_id:
-            st.info("شرکت ثبت نشده است."); return
+            st.info("شرکت ثبت نشده است.")
+            return
         conn = get_conn()
         dcol = pd.read_sql_query("""
             SELECT uu.id AS ID, uu.full_name AS نام_کامل, COALESCE(uu.phone,'') AS تلفن,
@@ -874,23 +915,73 @@ def dlg_profile(user_id: int):
         conn.close()
         st.dataframe(dcol, use_container_width=True)
 
+@st.dialog("ویرایش پروفایل")
+def dlg_edit_user(user_id: int):
+    conn = get_conn()
+    row = conn.execute("""
+        SELECT first_name,last_name,phone,role,company_id,note,status,domain,province,level,owner_id
+        FROM users WHERE id=?;""", (user_id,)).fetchone()
+
+    # ✅ اصلاح: ساخت دیکشنری‌ها بدون list comprehension با خروجی ناخواسته
+    companies = list_companies(None)
+    comp_map: Dict[str, Optional[int]] = {"— بدون شرکت —": None}
+    comp_map.update({n: i for i, n in companies})
+
+    owners = list_sales_accounts_including_admins()
+    owner_map: Dict[str, Optional[int]] = {"— بدون کارشناس —": None}
+    owner_map.update({f"{u} ({r})": i for i, u, r in owners})
+
+    if not row:
+        st.warning("کاربر یافت نشد.")
+        return
+
+    fn, ln, ph, rl, comp_id, note, stt, dom, prov, lvl, own = row
+    with st.form(f"edit_user_{user_id}", clear_on_submit=False):
+        c1, c2, c3 = st.columns(3)
+        with c1: first_name = st.text_input("نام *", value=fn or "")
+        with c2: last_name  = st.text_input("نام خانوادگی *", value=ln or "")
+        with c3: phone      = st.text_input("تلفن *", value=ph or "")
+        role = st.text_input("سمت", value=rl or "")
+
+        comp_label = next((k for k, v in comp_map.items() if v == comp_id), "— بدون شرکت —")
+        company_label = st.selectbox("شرکت", list(comp_map.keys()), index=list(comp_map.keys()).index(comp_label))
+
+        note_v = st.text_area("یادداشت", value=note or "")
+        s1, s2, s3 = st.columns(3)
+        with s1: status_v = st.selectbox("وضعیت", USER_STATUSES, index=USER_STATUSES.index(stt) if stt in USER_STATUSES else 0)
+        with s2: level_v  = st.selectbox("سطح", LEVELS, index=LEVELS.index(lvl) if lvl in LEVELS else 0)
+        with s3:
+            owner_label = next((k for k, v in owner_map.items() if v == own), "— بدون کارشناس —")
+            owner_label = st.selectbox("کارشناس فروش (شامل مدیر)", list(owner_map.keys()),
+                                       index=list(owner_map.keys()).index(owner_label))
+        dom_v = st.text_input("حوزه فعالیت", value=dom or "")
+        prov_v = st.text_input("استان", value=prov or "")
+        if st.form_submit_button("ذخیره"):
+            ok, msg = update_user(
+                user_id,
+                first_name=first_name, last_name=last_name, full_name=f"{first_name} {last_name}".strip(),
+                phone=phone, role=role, company_id=comp_map[company_label], note=note_v,
+                status=status_v, domain=dom_v, province=prov_v, level=level_v, owner_id=owner_map[owner_label]
+            )
+            if ok:
+                st.toast("ذخیره شد.", icon="💾"); st.rerun()
+            else:
+                st.error(msg)
+
 @st.dialog("ثبت تماس سریع")
-def dlg_quick_call(user_id: int, followup_after: bool = False):
+def dlg_quick_call(user_id: int):
     with st.form(f"call_{user_id}", clear_on_submit=True):
         j_date = st.text_input("تاریخ تماس (شمسی YYYY/MM/DD) *", value=today_jalali_str())
         t = st.time_input("زمان تماس *", datetime.now().time().replace(second=0, microsecond=0))
         status = st.selectbox("وضعیت تماس *", CALL_STATUSES)
         desc = st.text_area("توضیحات")
-        btn_label = "ثبت تماس و اقدام به ثبت پیگیری" if followup_after else "ثبت تماس"
-        if st.form_submit_button(btn_label):
+        if st.form_submit_button("ثبت تماس"):
             d = jalali_str_to_date(j_date)
             if not d:
-                st.warning("فرمت تاریخ صحیح نیست."); return
-            call_dt = datetime.combine(d, t)
-            create_call(user_id, call_dt, status, desc, current_user_id())
+                st.warning("فرمت تاریخ صحیح نیست.")
+                return
+            create_call(user_id, datetime.combine(d, t), status, desc, current_user_id())
             st.toast("تماس ثبت شد.", icon="✅")
-            if followup_after:
-                dlg_quick_followup(user_id)
 
 @st.dialog("ثبت پیگیری سریع")
 def dlg_quick_followup(user_id: int):
@@ -900,10 +991,12 @@ def dlg_quick_followup(user_id: int):
         j_due = st.text_input("تاریخ پیگیری (شمسی YYYY/MM/DD) *", value=today_jalali_str())
         if st.form_submit_button("ثبت"):
             if not title.strip():
-                st.warning("عنوان اجباری است."); return
+                st.warning("عنوان اجباری است.")
+                return
             d = jalali_str_to_date(j_due)
             if not d:
-                st.warning("فرمت تاریخ صحیح نیست."); return
+                st.warning("فرمت تاریخ صحیح نیست.")
+                return
             create_followup(user_id, title, details, d, "در حال انجام", current_user_id())
             st.toast("پیگیری ثبت شد.", icon="✅")
 
@@ -971,7 +1064,7 @@ def dlg_company_view(company_id: int):
     with tabs[3]:
         dfu = pd.read_sql_query("""
           SELECT f.id AS ID, u.full_name AS نام‌کاربر, f.title AS عنوان,
-                 COALESCE(f.details,'') AS جزئیات, f.due_date AS تاریخ_پیگیری,
+                 COALESCE(f.details,'') AS جزئیات, f.due_date AS تاریخ‌_پیگیری,
                  f.status AS وضعیت, COALESCE(au.username,'') AS کارشناس‌فروش
           FROM followups f
           JOIN users u ON u.id=f.user_id
@@ -979,8 +1072,8 @@ def dlg_company_view(company_id: int):
           WHERE u.company_id=?
           ORDER BY f.due_date DESC, f.id DESC;
         """, conn, params=(company_id,))
-        if "تاریخ_پیگیری" in dfu.columns:
-            dfu["تاریخ_پیگیری"] = dfu["تاریخ_پیگیری"].apply(lambda x: date_to_jalali_str(safe_parse_iso_date(x)) if x else "")
+        if "تاریخ‌_پیگیری" in dfu.columns:
+            dfu["تاریخ‌_پیگیری"] = dfu["تاریخ‌_پیگیری"].apply(lambda x: date_to_jalali_str(datetime.strptime(x, "%Y-%m-%d").date()) if x else "")
         st.dataframe(dfu, use_container_width=True)
     conn.close()
 
@@ -990,7 +1083,8 @@ def dlg_company_edit(company_id: int):
     row = conn.execute("SELECT name, phone, address, note, level, status FROM companies WHERE id=?;", (company_id,)).fetchone()
     conn.close()
     if not row:
-        st.warning("شرکت یافت نشد."); return
+        st.warning("شرکت یافت نشد.")
+        return
     name, phone, addr, note, level, status = row
     with st.form(f"edit_company_{company_id}", clear_on_submit=False):
         c1, c2 = st.columns(2)
@@ -1015,7 +1109,8 @@ def dlg_company_quick_call(company_id: int):
     users = pd.read_sql_query("SELECT id, full_name FROM users WHERE company_id=? ORDER BY full_name;", conn, params=(company_id,))
     conn.close()
     if users.empty:
-        st.info("برای این شرکت کاربری ثبت نشده است."); return
+        st.info("برای این شرکت کاربری ثبت نشده است.")
+        return
     options = {row["full_name"]: int(row["id"]) for _, row in users.iterrows()}
     with st.form(f"comp_call_{company_id}", clear_on_submit=True):
         user_label = st.selectbox("کاربر", list(options.keys()))
@@ -1026,7 +1121,8 @@ def dlg_company_quick_call(company_id: int):
         if st.form_submit_button("ثبت تماس"):
             d = jalali_str_to_date(j_date)
             if not d:
-                st.warning("فرمت تاریخ صحیح نیست."); return
+                st.warning("فرمت تاریخ صحیح نیست.")
+                return
             create_call(options[user_label], datetime.combine(d, t), status, desc, current_user_id())
             st.toast("تماس ثبت شد.", icon="✅")
 
@@ -1036,7 +1132,8 @@ def dlg_company_quick_fu(company_id: int):
     users = pd.read_sql_query("SELECT id, full_name FROM users WHERE company_id=? ORDER BY full_name;", conn, params=(company_id,))
     conn.close()
     if users.empty:
-        st.info("برای این شرکت کاربری ثبت نشده است."); return
+        st.info("برای این شرکت کاربری ثبت نشده است.")
+        return
     options = {row["full_name"]: int(row["id"]) for _, row in users.iterrows()}
     with st.form(f"comp_fu_{company_id}", clear_on_submit=True):
         user_label = st.selectbox("کاربر", list(options.keys()))
@@ -1045,10 +1142,12 @@ def dlg_company_quick_fu(company_id: int):
         j_due = st.text_input("تاریخ پیگیری (شمسی YYYY/MM/DD) *", value=today_jalali_str())
         if st.form_submit_button("ثبت"):
             if not title.strip():
-                st.warning("عنوان اجباری است."); return
+                st.warning("عنوان اجباری است.")
+                return
             d = jalali_str_to_date(j_due)
             if not d:
-                st.warning("فرمت تاریخ صحیح نیست."); return
+                st.warning("فرمت تاریخ صحیح نیست.")
+                return
             create_followup(options[user_label], title, details, d, "در حال انجام", current_user_id())
             st.toast("پیگیری ثبت شد.", icon="✅")
 
@@ -1077,6 +1176,7 @@ def page_dashboard():
 
 def page_companies():
     st.subheader("ثبت و مدیریت شرکت‌ها")
+    # --- افزودن شرکت ---
     with st.expander("➕ افزودن شرکت", expanded=False):
         with st.form("company_form", clear_on_submit=True):
             name = st.text_input("نام شرکت *")
@@ -1095,7 +1195,9 @@ def page_companies():
                     st.toast(f"شرکت «{name}» ثبت شد.", icon="✅")
                     st.rerun()
 
+    # --- فیلترها ---
     st.markdown("### فیلتر شرکت‌ها")
+
     only_owner = None if is_admin() else current_user_id()
     preselect = [only_owner] if only_owner else []
     owner_ids_filter = sales_filter_widget(disabled=not is_admin(), preselected_ids=preselect, key="sf_companies")
@@ -1117,6 +1219,7 @@ def page_companies():
     dfc = df_companies_advanced(q_name, f_status, f_level, created_from, created_to, has_open,
                                 owner_ids_filter if owner_ids_filter else None, only_owner)
 
+    # --- جدول با ستون‌های اقدام ---
     if not dfc.empty:
         base = dfc.copy()
         base["👁 نمایش"] = False
@@ -1127,10 +1230,10 @@ def page_companies():
         display_cols = ["نام_شرکت","تلفن","وضعیت_شرکت","سطح_شرکت","تاریخ_ایجاد","پیگیری_باز_دارد","کارشناس_فروش",
                         "👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]
         colcfg = {
-            "👁 نمایش":  st.column_config.CheckboxColumn("👁", help="نمایش پروفایل شرکت", width="small"),
-            "✏ ویرایش": st.column_config.CheckboxColumn("✏", help="ویرایش اطلاعات شرکت", width="small"),
-            "📞 تماس":   st.column_config.CheckboxColumn("📞", help="ثبت تماس برای یکی از کاربران شرکت", width="small"),
-            "🗓️ پیگیری": st.column_config.CheckboxColumn("🗓️", help="ثبت پیگیری برای یکی از کاربران شرکت", width="small"),
+            "👁 نمایش":  st.column_config.CheckboxColumn("نمایش", help="نمایش پروفایل شرکت", width="small"),
+            "✏ ویرایش": st.column_config.CheckboxColumn("ویرایش", help="ویرایش اطلاعات شرکت", width="small"),
+            "📞 تماس":   st.column_config.CheckboxColumn("تماس", help="ثبت تماس برای یکی از کاربران شرکت", width="small"),
+            "🗓️ پیگیری": st.column_config.CheckboxColumn("پیگیری", help="ثبت پیگیری برای یکی از کاربران شرکت", width="small"),
         }
         edited = st.data_editor(
             base, use_container_width=True, hide_index=True,
@@ -1210,7 +1313,93 @@ def page_users():
                     else:
                         st.error(msg)
 
-    # --- فیلتر کاربران ---
+    # --- 📥 ایمپورت اکسل مخاطبین ---
+    with st.expander("📥 ایمپورت اکسل مخاطبین", expanded=False):
+        st.caption("ستون‌های الزامی: FirstName, LastName, Phone — ستون‌های اختیاری: Role, Company, Status, Level, Domain, Province, OwnerUsername, Note")
+
+        tpl = pd.DataFrame([{
+            "FirstName":"علی","LastName":"محمدی","Phone":"09120000000","Role":"مدیر خرید",
+            "Company":"شرکت نمونه","Status":"بدون وضعیت","Level":"هیچکدام",
+            "Domain":"صنعتی","Province":"تهران","OwnerUsername":"admin","Note":""
+        }])
+        sample = io.BytesIO()
+        try:
+            tpl.to_excel(sample, index=False, engine="openpyxl")
+        except Exception:
+            sample = io.BytesIO(b"")
+        else:
+            sample.seek(0)
+
+        st.download_button("دانلود الگوی اکسل", data=sample.getvalue(), file_name="contacts_template.xlsx", disabled=(sample.getbuffer().nbytes==0))
+
+        up = st.file_uploader("فایل اکسل (xlsx)", type=["xlsx"])
+        if up is not None:
+            try:
+                df_imp = pd.read_excel(up)  # نیاز به openpyxl
+            except Exception as e:
+                st.error(f"خطا در خواندن فایل: {e}")
+                df_imp = None
+
+            if df_imp is not None:
+                st.write("پیش‌نمایش ۲۰ ردیف اول:")
+                st.dataframe(df_imp.head(20), use_container_width=True)
+
+                cols = {str(c).strip().lower(): c for c in df_imp.columns}
+                def col(name): return cols.get(name.lower())
+
+                required_ok = all(col(x) is not None for x in ["FirstName","LastName","Phone"])
+                if not required_ok:
+                    st.warning("ستون‌های الزامی FirstName, LastName, Phone باید موجود باشند.")
+                else:
+                    if st.button("شروع ایمپورت", use_container_width=True):
+                        ok_cnt, skip_cnt = 0, 0
+                        msgs: List[str] = []
+                        for idx, row in df_imp.iterrows():
+                            def getv(key):
+                                cc = col(key)
+                                if cc is None: return ""
+                                v = row.get(cc)
+                                return "" if (pd.isna(v) or v is None) else str(v).strip()
+
+                            first_name = getv("FirstName")
+                            last_name  = getv("LastName")
+                            phone      = getv("Phone")
+                            if not first_name or not last_name or not phone:
+                                skip_cnt += 1; msgs.append(f"رد شد ردیف {idx+2}: فیلد الزامی خالی.")
+                                continue
+
+                            job_role   = getv("Role")
+                            company_n  = getv("Company")
+                            status_v   = getv("Status")
+                            level_v    = getv("Level")
+                            domain_v   = getv("Domain")
+                            province_v = getv("Province")
+                            owner_u    = getv("OwnerUsername")
+                            note_v     = getv("Note")
+
+                            status_v = status_v if status_v in USER_STATUSES else "بدون وضعیت"
+                            level_v  = level_v  if level_v  in LEVELS        else "هیچکدام"
+
+                            company_id = get_or_create_company(company_n, current_user_id()) if company_n else None
+                            owner_id   = get_app_user_id_by_username(owner_u) if owner_u else None
+
+                            ok, msg = create_user(
+                                first_name, last_name, phone, job_role, company_id, note_v,
+                                status_v, domain_v, province_v, level_v, owner_id, current_user_id()
+                            )
+                            if ok:
+                                ok_cnt += 1
+                            else:
+                                skip_cnt += 1
+                                msgs.append(f"ردیف {idx+2}: {msg}")
+
+                        st.success(f"ایمپورت پایان یافت. ✅ موفق: {ok_cnt} | ❌ ناموفق: {skip_cnt}")
+                        if msgs:
+                            with st.expander("جزئیات موارد ناموفق"):
+                                for m in msgs:
+                                    st.write("•", m)
+
+    # ------------------------- فیلتر کاربران -------------------------
     st.markdown("### فیلتر کاربران")
     f1, f2, f3 = st.columns([1, 1, 1])
     first_q = f1.text_input("نام")
@@ -1235,30 +1424,37 @@ def page_users():
                                owner_ids_filter if owner_ids_filter else None,
                                only_owner)
 
+    # نگاشت user_id برای هر نام کامل
     conn = get_conn()
     id_map = pd.read_sql_query("SELECT id, full_name FROM users;", conn)
     conn.close()
     name_to_id = dict(zip(id_map["full_name"], id_map["id"]))
     df_all["user_id"] = df_all["نام_کامل"].map(name_to_id)
 
-    ordered = ["نام","نام_خانوادگی","شرکت","تلفن","وضعیت_کاربر","سطح_کاربر","آخرین_تماس","استان","پیگیری_باز_دارد","کارشناس_فروش"]
+    # ستون‌های مرتب‌شده برای نمایش
+    ordered = ["نام","نام_خانوادگی","شرکت","تلفن","وضعیت_کاربر","سطح_کاربر","آخرین_تماس","حوزه_فعالیت","استان","پیگیری_باز_دارد","کارشناس_فروش"]
     ordered = [c for c in ordered if c in df_all.columns]
 
-    base = df_all[ordered + ["user_id"]].copy()
+    base = df_all[ordered + ["user_id","תاریخ_ایجاد" if "תاریخ_ایجاد" in df_all.columns else "تاریخ_ایجاد"]].copy()
+    if "تاریخ_ایجاد" in base.columns and "تاریخ_ایجاد" not in ordered:
+        base.insert(5, "تاریخ_ایجاد", base.pop("تاریخ_ایجاد"))
 
-    base["👁"] = False
-    base["✏"] = False
-    base["📞"] = False
-    base["🗓️"] = False
+    # 👇 ستون انتخاب برای عملیات گروهی + اکشن‌های تکی
+    base["✅ انتخاب"] = False
+    base["👁 نمایش"] = False
+    base["✏ ویرایش"] = False
+    base["📞 تماس"]  = False
+    base["🗓️ پیگیری"] = False
 
     base = base.set_index("user_id", drop=True)
 
-    display_cols = [c for c in base.columns]
+    display_cols = [c for c in base.columns if c != "user_id"]
     colcfg = {
-        "👁": st.column_config.CheckboxColumn("👁", help="نمایش پروفایل", width="small"),
-        "✏": st.column_config.CheckboxColumn("✏", help="ویرایش پروفایل", width="small"),
-        "📞": st.column_config.CheckboxColumn("📞", help="ثبت تماس (و سپس پیگیری)", width="small"),
-        "🗓️": st.column_config.CheckboxColumn("🗓️", help="ثبت پیگیری", width="small"),
+        "✅ انتخاب": st.column_config.CheckboxColumn("انتخاب", help="برای عملیات گروهی تیک بزن", width="small"),
+        "👁 نمایش":  st.column_config.CheckboxColumn("نمایش", help="نمایش پروفایل", width="small"),
+        "✏ ویرایش": st.column_config.CheckboxColumn("ویرایش", help="ویرایش پروفایل", width="small"),
+        "📞 تماس":   st.column_config.CheckboxColumn("تماس", help="ثبت تماس", width="small"),
+        "🗓️ پیگیری": st.column_config.CheckboxColumn("پیگیری", help="ثبت پیگیری", width="small"),
     }
 
     edited = st.data_editor(
@@ -1267,11 +1463,51 @@ def page_users():
         hide_index=True,
         column_order=display_cols,
         column_config=colcfg,
-        disabled=[c for c in display_cols if c not in ["👁","✏","📞","🗓️"]],
+        disabled=[c for c in display_cols if c not in ["✅ انتخاب","👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]],
         key="users_editor_widget"
     )
 
-    actions = ["👁","✏","📞","🗓️"]
+    # ======= نوار عملیات گروهی =======
+    selected_ids = [int(idx) for idx, row in edited.iterrows() if bool(row.get("✅ انتخاب", False))]
+
+    st.markdown("#### عملیات گروهی روی کاربران انتخاب‌شده")
+
+    cbu1, cbu2, cbu3 = st.columns([2, 2, 2])
+
+    owners_all = list_sales_accounts_including_admins()
+    if is_admin():
+        owner_labels = [f"{u} ({r})" for i, u, r in owners_all]
+        owner_ids_map = {f"{u} ({r})": i for i, u, r in owners_all}
+        default_idx = 0
+    else:
+        me_row = next(((i, u, r) for i, u, r in owners_all if i == current_user_id()), None)
+        me_label = f"{me_row[1]} ({me_row[2]})" if me_row else "من (agent)"
+        owner_labels = [me_label]
+        owner_ids_map = {me_label: current_user_id()}
+        default_idx = 0
+
+    with cbu1:
+        target_owner_label = st.selectbox("کارشناس فروش جدید", owner_labels, index=default_idx, key="bulk_owner_label")
+    new_owner_id = owner_ids_map[target_owner_label]
+
+    with cbu2:
+        st.info(f"تعداد انتخاب‌شده: **{len(selected_ids)}**")
+
+    def _apply_bulk_owner():
+        if not selected_ids:
+            st.warning("هیچ کاربری انتخاب نشده است.")
+            return
+        affected = bulk_update_users_owner(selected_ids, new_owner_id)
+        st.toast(f"کارشناس فروش {affected} مخاطب تغییر کرد.", icon="✅")
+        st.rerun()
+
+    with cbu3:
+        st.button("اعمال تغییر کارشناس برای انتخاب‌شده‌ها", type="primary", use_container_width=True, on_click=_apply_bulk_owner)
+
+    st.caption("نکته: ستون «✅ انتخاب» را برای رکوردهایی که می‌خواهی تغییر کنند فعال کن، سپس کارشناس جدید را انتخاب و دکمه اعمال را بزن.")
+
+    # ======= اکشن‌های تکی =======
+    actions = ["👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]
 
     def snapshot(df_show: pd.DataFrame) -> Dict[int, tuple]:
         out: Dict[int, tuple] = {}
@@ -1285,7 +1521,7 @@ def page_users():
         p = prev.get(uid, (False, False, False, False))
         if states[0] and not p[0]: dlg_profile(uid)
         if states[1] and not p[1]: dlg_edit_user(uid)
-        if states[2] and not p[2]: dlg_quick_call(uid, followup_after=True)
+        if states[2] and not p[2]: dlg_quick_call(uid)
         if states[3] and not p[3]: dlg_quick_followup(uid)
     st.session_state["users_actions_prev"] = curr
 
@@ -1359,32 +1595,12 @@ def page_followups():
     end_date   = jalali_str_to_date(end_j) if end_j else None
     df = df_followups_by_filters(name_q, st_statuses, start_date, end_date,
                                  owner_ids_filter if owner_ids_filter else None, only_owner)
-
-    orig_df = df.copy()
-    cfg = {"وضعیت": st.column_config.SelectboxColumn("وضعیت", options=TASK_STATUSES, help="برای تغییر وضعیت کلیک کن")}
-    edited = st.data_editor(
-        df, use_container_width=True, hide_index=True,
-        column_config=cfg,
-        disabled=[c for c in df.columns if c != "وضعیت"]
-    )
-    if st.button("اعمال تغییر وضعیت‌ها"):
-        changed = 0
-        for idx in range(len(edited)):
-            rid = int(edited.iloc[idx]["ID"])
-            new_status = str(edited.iloc[idx]["وضعیت"])
-            old_status = str(orig_df.iloc[idx]["وضعیت"])
-            if new_status != old_status:
-                update_followup_status(rid, new_status)
-                changed += 1
-        if changed:
-            st.success(f"وضعیت {changed} پیگیری به‌روزرسانی شد.")
-            st.rerun()
-        else:
-            st.info("تغییری اعمال نشد.")
+    st.dataframe(df, use_container_width=True)
 
 def page_access():
     if not is_admin():
-        st.info("این بخش فقط برای مدیر در دسترس است."); return
+        st.info("این بخش فقط برای مدیر در دسترس است.")
+        return
     all_users = list_users_basic(None)
     map_users = {"— بدون لینک —": None}
     for u in all_users:
