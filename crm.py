@@ -116,6 +116,67 @@ def plain_date_to_jalali_str(maybe_date: str) -> str:
     except Exception:
         return str(maybe_date)
 
+# ====================== فرمت تاریخ میلادی با روز هفته ======================
+def format_gregorian_with_weekday(dt_str: str) -> str:
+    """تبدیل رشته تاریخ به فرمت میلادی با روز هفته"""
+    if not dt_str:
+        return ""
+    
+    try:
+        # تبدیل رشته به datetime
+        if "T" in dt_str:
+            dt = datetime.fromisoformat(dt_str)
+        else:
+            try:
+                dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                try:
+                    dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
+                except ValueError:
+                    dt = datetime.strptime(dt_str, "%Y-%m-%d")
+        
+        # نام روزهای هفته به فارسی
+        weekdays = {
+            0: "دوشنبه",
+            1: "سه‌شنبه", 
+            2: "چهارشنبه",
+            3: "پنجشنبه",
+            4: "جمعه",
+            5: "شنبه",
+            6: "یکشنبه"
+        }
+        
+        weekday = weekdays[dt.weekday()]
+        return f"{dt.strftime('%Y-%m-%d')} ({weekday})"
+    
+    except Exception:
+        return dt_str
+
+def format_date_only_with_weekday(date_str: str) -> str:
+    """تبدیل تاریخ فقط (بدون زمان) به فرمت میلادی با روز هفته"""
+    if not date_str:
+        return ""
+    
+    try:
+        dt = datetime.strptime(str(date_str).strip(), "%Y-%m-%d")
+        
+        # نام روزهای هفته به فارسی
+        weekdays = {
+            0: "دوشنبه",
+            1: "سه‌شنبه", 
+            2: "چهارشنبه",
+            3: "پنجشنبه",
+            4: "جمعه",
+            5: "شنبه",
+            6: "یکشنبه"
+        }
+        
+        weekday = weekdays[dt.weekday()]
+        return f"{dt.strftime('%Y-%m-%d')} ({weekday})"
+    
+    except Exception:
+        return date_str
+
 # ====================== ثوابت و DB ======================
 DB_PATH = "crm.db"
 CALL_STATUSES = ["ناموفق", "موفق", "خاموش", "رد تماس"]
@@ -483,6 +544,68 @@ def sales_filter_widget(disabled: bool, preselected_ids: List[int], key: str = "
     return [label_to_id[l] for l in selected_labels]
 
 # ====================== DataFrames برای صفحات ======================
+def df_companies_advanced(q_name, f_status, f_level, created_from, created_to,
+                         has_open_task, owner_ids_filter: Optional[List[int]], enforce_owner: Optional[int]):
+    """تابع جدید برای فیلتر کردن شرکت‌ها"""
+    conn = get_conn(); params, where = [], []
+    
+    if q_name: 
+        where.append("c.name LIKE ?"); params.append(f"%{q_name.strip()}%")
+    if f_status: 
+        where.append("c.status IN (" + ",".join(["?"]*len(f_status)) + ")"); params += f_status
+    if f_level: 
+        where.append("c.level IN (" + ",".join(["?"]*len(f_level)) + ")"); params += f_level
+    if created_from: 
+        where.append("date(c.created_at) >= ?"); params.append(created_from.isoformat())
+    if created_to:   
+        where.append("date(c.created_at) <= ?"); params.append(created_to.isoformat())
+    
+    # فیلتر کارشناس فروش
+    if enforce_owner:
+        where.append("EXISTS (SELECT 1 FROM users u WHERE u.company_id=c.id AND u.owner_id=?)")
+        params.append(enforce_owner)
+    if owner_ids_filter:
+        placeholders = ",".join(["?"]*len(owner_ids_filter))
+        where.append(f"EXISTS (SELECT 1 FROM users u WHERE u.company_id=c.id AND u.owner_id IN ({placeholders}))")
+        params += owner_ids_filter
+
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    df = pd.read_sql_query(f"""
+      SELECT
+        c.id AS ID,
+        c.name AS نام_شرکت,
+        COALESCE(c.phone,'') AS تلفن,
+        COALESCE(c.status,'') AS وضعیت_شرکت,
+        COALESCE(c.level,'') AS سطح_شرکت,
+        c.created_at AS تاریخ_ایجاد,
+        EXISTS(SELECT 1 FROM users u JOIN followups f ON f.user_id=u.id 
+               WHERE u.company_id=c.id AND f.status='در حال انجام') AS پیگیری_باز_دارد,
+        (SELECT GROUP_CONCAT(DISTINCT au.username, '، ') 
+         FROM users u 
+         LEFT JOIN app_users au ON au.id=u.owner_id 
+         WHERE u.company_id=c.id AND au.username IS NOT NULL) AS کارشناس_فروش
+      FROM companies c
+      {where_sql}
+      ORDER BY c.created_at DESC, c.id DESC
+    """, conn, params=params)
+
+    # فیلتر پیگیری باز
+    if has_open_task is not None:
+        df = df[df["پیگیری_باز_دارد"] == (1 if has_open_task else 0)]
+
+    # تبدیل تاریخ‌ها به فرمت میلادی با روز هفته
+    if "تاریخ_ایجاد" in df.columns:
+        df["تاریخ_ایجاد"] = df["تاریخ_ایجاد"].apply(format_gregorian_with_weekday)
+
+    # نمایش سفارشی برای «پیگیری_باز_دارد»
+    def _open_followup_display(row):
+        return "دارد" if int(row.get("پیگیری_باز_دارد", 0)) == 1 else "ندارد"
+
+    df["پیگیری_باز_دارد"] = df.apply(_open_followup_display, axis=1)
+
+    conn.close(); return df
+
 def df_users_advanced(first_q, last_q, created_from, created_to,
                       has_open_task, last_call_from, last_call_to,
                       statuses, owner_ids_filter: Optional[List[int]], enforce_owner: Optional[int]):
@@ -531,17 +654,17 @@ def df_users_advanced(first_q, last_q, created_from, created_to,
     if last_call_to:
         df = df[(df["آخرین_تماس"].notna()) & (pd.to_datetime(df["آخرین_تماس"]).dt.date <= last_call_to)]
 
-    # تبدیل تاریخ‌ها
+    # تبدیل تاریخ‌ها به فرمت میلادی با روز هفته
     if "تاریخ_ایجاد" in df.columns:
-        df["تاریخ_ایجاد"] = df["تاریخ_ایجاد"].apply(dt_to_jalali_str)
+        df["تاریخ_ایجاد"] = df["تاریخ_ایجاد"].apply(format_gregorian_with_weekday)
     if "آخرین_تماس" in df.columns:
-        df["آخرین_تماس"] = df["آخرین_تماس"].apply(dt_to_jalali_str)
+        df["آخرین_تماس"] = df["آخرین_تماس"].apply(format_gregorian_with_weekday)
 
-    # 👇 نمایش سفارشی برای «پیگیری_باز_دارد»
+    # نمایش سفارشی برای «پیگیری_باز_دارد»
     def _open_followup_display(row):
         if int(row.get("پیگیری_باز_دارد", 0)) == 0 or pd.isna(row.get("آخرین_پیگیری_باز")):
             return "ندارد"
-        return plain_date_to_jalali_str(row.get("آخرین_پیگیری_باز"))
+        return format_date_only_with_weekday(row.get("آخرین_پیگیری_باز"))
 
     df["وضعیت_پیگیری_باز"] = df.apply(_open_followup_display, axis=1)
 
@@ -571,7 +694,7 @@ def df_calls_by_filters(name_query, statuses, start, end,
     """, conn, params=params)
 
     if "تاریخ_و_زمان" in df.columns:
-        df["تاریخ_و_زمان"] = df["تاریخ_و_زمان"].apply(dt_to_jalali_str)
+        df["تاریخ_و_زمان"] = df["تاریخ_و_زمان"].apply(format_gregorian_with_weekday)
     conn.close(); return df
 
 def df_followups_by_filters(name_query, statuses, start, end,
@@ -598,9 +721,8 @@ def df_followups_by_filters(name_query, statuses, start, end,
         ORDER BY f.due_date DESC, f.id DESC
     """, conn, params=params)
 
-    # ✅ نمایش تاریخ پیگیری با همان فرمت ثبت (شمسی)
     if "تاریخ_پیگیری" in df.columns:
-        df["تاریخ_پیگیری"] = df["تاریخ_پیگیری"].apply(plain_date_to_jalali_str)
+        df["تاریخ_پیگیری"] = df["تاریخ_پیگیری"].apply(format_date_only_with_weekday)
 
     conn.close(); return df
 
@@ -837,7 +959,7 @@ def dlg_profile(user_id: int):
         st.write("**وضعیت:**", u[7]); st.write("**سطح:**", u[8])
         st.write("**حوزه فعالیت:**", u[9]); st.write("**استان:**", u[10])
         st.write("**یادداشت:**", u[11])
-        st.write("**تاریخ ایجاد:**", dt_to_jalali_str(u[12]))
+        st.write("**تاریخ ایجاد:**", format_gregorian_with_weekday(u[12]))
         st.write("**کارشناس فروش:**", u[14])
 
     with tabs[1]:
@@ -856,7 +978,7 @@ def dlg_profile(user_id: int):
         """, conn, params=(user_id,))
         conn.close()
         if "تاریخ_و_زمان" in dfc.columns:
-            dfc["تاریخ_و_زمان"] = dfc["تاریخ_و_زمان"].apply(dt_to_jalali_str)
+            dfc["تاریخ_و_زمان"] = dfc["تاریخ_و_زمان"].apply(format_gregorian_with_weekday)
         st.dataframe(dfc, use_container_width=True)
 
     with tabs[2]:
@@ -873,7 +995,7 @@ def dlg_profile(user_id: int):
         """, conn, params=(user_id,))
         conn.close()
         if "تاریخ_پیگیری" in dff.columns:
-            dff["تاریخ_پیگیری"] = dff["تاریخ_پیگیری"].apply(plain_date_to_jalali_str)
+            dff["تاریخ_پیگیری"] = dff["تاریخ_پیگیری"].apply(format_date_only_with_weekday)
         st.dataframe(dff, use_container_width=True)
 
     with tabs[3]:
@@ -1000,7 +1122,7 @@ def dlg_company_view(company_id: int):
         st.write("**یادداشت:**", c[4])
         st.write("**سطح:**", c[5])
         st.write("**وضعیت:**", c[6])
-        st.write("**تاریخ ایجاد:**", dt_to_jalali_str(c[7]))
+        st.write("**تاریخ ایجاد:**", format_gregorian_with_weekday(c[7]))
 
         experts = pd.read_sql_query("""
             SELECT GROUP_CONCAT(x.username, '، ') AS experts
@@ -1038,7 +1160,7 @@ def dlg_company_view(company_id: int):
           ORDER BY cl.call_datetime DESC, cl.id DESC;
         """, conn, params=(company_id,))
         if "تاریخ‌و‌زمان" in dcalls.columns:
-            dcalls["تاریخ‌و‌زمان"] = dcalls["تاریخ‌و‌زمان"].apply(dt_to_jalali_str)
+            dcalls["تاریخ‌و‌زمان"] = dcalls["تاریخ‌و‌زمان"].apply(format_gregorian_with_weekday)
         st.dataframe(dcalls, use_container_width=True)
 
     with tabs[3]:
@@ -1053,7 +1175,7 @@ def dlg_company_view(company_id: int):
           ORDER BY f.due_date DESC, f.id DESC;
         """, conn, params=(company_id,))
         if "تاریخ_پیگیری" in dfu.columns:
-            dfu["تاریخ_پیگیری"] = dfu["تاریخ_پیگیری"].apply(plain_date_to_jalali_str)
+            dfu["تاریخ_پیگیری"] = dfu["تاریخ_پیگیری"].apply(format_date_only_with_weekday)
         st.dataframe(dfu, use_container_width=True)
     conn.close()
 
