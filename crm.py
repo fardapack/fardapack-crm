@@ -9,6 +9,7 @@ FardaPack Mini-CRM — Streamlit + SQLite (Streamlit 1.50 friendly)
 - صفحات: داشبورد، شرکت‌ها، کاربران، تماس‌ها، پیگیری‌ها، مدیریت دسترسی (برای مدیر)
 - 📥 ایمپورت اکسل مخاطبین در صفحه کاربران
 - ✅ عملیات گروهی در صفحه کاربران (تغییر کارشناس فروشِ چندتایی)
+- ♻️ بازیابی دیتابیس از بکاپ (.db یا .zip)
 """
 
 import sqlite3
@@ -21,7 +22,7 @@ import hashlib
 import uuid
 
 # 👇 اضافه شد
-import os, io, zipfile
+import os, io, zipfile, shutil
 
 # ====================== صفحه و CSS ======================
 st.set_page_config(page_title="FardaPack Mini-CRM", page_icon="📇", layout="wide")
@@ -699,7 +700,41 @@ def header_userbox():
 init_db()
 try_autologin_from_url_token()
 
-# ====================== 🔐 دکمه‌های دانلود بکاپ دیتابیس ======================
+# ====================== 🔐 پشتیبان‌گیری و بازیابی دیتابیس ======================
+def extract_db_from_zip(zip_bytes: bytes) -> Optional[bytes]:
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
+            # اولین فایل .db
+            for info in zf.infolist():
+                if info.filename.lower().endswith(".db"):
+                    return zf.read(info)
+    except Exception:
+        return None
+    return None
+
+def validate_db_file(path: str) -> Tuple[bool, str]:
+    try:
+        conn = sqlite3.connect(path, timeout=5)
+        cur = conn.cursor()
+        # سلامت دیتابیس
+        chk = cur.execute("PRAGMA integrity_check;").fetchone()
+        if not chk or str(chk[0]).lower() != "ok":
+            conn.close()
+            return False, f"integrity_check ناموفق: {chk[0] if chk else 'نامشخص'}"
+        # جداول ضروری
+        required = {"companies","users","calls","followups","app_users","sessions"}
+        rows = cur.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()
+        have = {r[0] for r in rows}
+        missing = required - have
+        conn.close()
+        if missing:
+            # اگر فقط sessions نبود، init_db بعداً آن را می‌سازد؛ ولی app_users/others ضروری‌اند
+            if missing - {"sessions"}:
+                return False, f"جدول(های) ضروری موجود نیست: {', '.join(sorted(missing))}"
+        return True, "ok"
+    except Exception as e:
+        return False, str(e)
+
 def db_download_ui(db_path: str = DB_PATH):
     st.markdown("### 🛡️ پشتیبان‌گیری دیتابیس")
     if not os.path.exists(db_path):
@@ -737,6 +772,67 @@ def db_download_ui(db_path: str = DB_PATH):
             mime="application/zip",
             use_container_width=True
         )
+
+    # ---------- ♻️ بازیابی از بکاپ ----------
+    st.markdown("### ♻️ بازیابی از بکاپ")
+    st.caption("فایل `.db` یا `.zip` (حاوی فایل `.db`) را آپلود کن. قبل از جایگزینی، از دیتابیس فعلی بکاپ گرفته می‌شود.")
+    up_restore = st.file_uploader("انتخاب فایل بکاپ برای بازیابی", type=["db","zip"], key="restore_uploader")
+
+    restore_confirm = st.checkbox("تایید می‌کنم که با بازیابی، دیتای فعلی جایگزین می‌شود و احتمالاً از حساب خارج می‌شوم.", value=False)
+    if st.button("بازیابی", type="primary", use_container_width=True, disabled=(up_restore is None or not restore_confirm)):
+        if up_restore is None:
+            st.warning("ابتدا فایل بکاپ را انتخاب کن.")
+            return
+        data = up_restore.read() or b""
+        if len(data) == 0:
+            st.error("فایل خالی است.")
+            return
+
+        # اگر zip بود، استخراج اولین .db
+        if up_restore.name.lower().endswith(".zip"):
+            extracted = extract_db_from_zip(data)
+            if not extracted:
+                st.error("در فایل ZIP هیچ فایل .db یافت نشد.")
+                return
+            data = extracted
+
+        # ذخیره موقت و اعتبارسنجی
+        tmp_path = "_restore_tmp.db"
+        try:
+            with open(tmp_path, "wb") as f:
+                f.write(data)
+        except Exception as e:
+            st.error(f"خطا در نوشتن فایل موقت: {e}")
+            return
+
+        ok, msg = validate_db_file(tmp_path)
+        if not ok:
+            os.remove(tmp_path)
+            st.error(f"اعتبارسنجی بکاپ ناموفق بود: {msg}")
+            return
+
+        # بکاپ گرفتن از فعلی
+        try:
+            ts2 = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_name = f"crm_before_restore_{ts2}.db"
+            shutil.copyfile(DB_PATH, backup_name)
+        except Exception as e:
+            st.warning(f"نتوانستم از دیتابیس فعلی بکاپ بگیرم: {e}")
+
+        # جایگزینی اتمیک تا حد ممکن
+        try:
+            os.replace(tmp_path, DB_PATH)
+        except Exception as e:
+            st.error(f"جایگزینی دیتابیس ناموفق بود: {e}")
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+            return
+
+        st.success("بازیابی با موفقیت انجام شد. برنامه ری‌ران می‌شود تا اسکیمای لازم هم اعمال شود (ممکن است لازم باشد دوباره وارد شوید). 🔁")
+        st.rerun()
 
 # ====================== دیالوگ‌ها: کاربران ======================
 @st.dialog("پروفایل کاربر")
