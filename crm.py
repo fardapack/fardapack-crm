@@ -571,6 +571,7 @@ def df_companies_advanced(q_name, f_status, f_level, created_from, created_to,
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
+    # 🚑 فیکس اینجا: DISTINCT را به زیربرگزیده منتقل کردیم تا با جداکننده سفارشی سازگار باشد.
     df = pd.read_sql_query(f"""
       SELECT
         c.id AS ID,
@@ -581,10 +582,15 @@ def df_companies_advanced(q_name, f_status, f_level, created_from, created_to,
         c.created_at AS تاریخ_ایجاد,
         EXISTS(SELECT 1 FROM users u JOIN followups f ON f.user_id=u.id 
                WHERE u.company_id=c.id AND f.status='در حال انجام') AS پیگیری_باز_دارد,
-        (SELECT GROUP_CONCAT(DISTINCT au.username, '، ') 
-         FROM users u 
-         LEFT JOIN app_users au ON au.id=u.owner_id 
-         WHERE u.company_id=c.id AND au.username IS NOT NULL) AS کارشناس_فروش
+        (
+          SELECT GROUP_CONCAT(username, '، ')
+          FROM (
+            SELECT DISTINCT au.username AS username
+            FROM users u 
+            LEFT JOIN app_users au ON au.id=u.owner_id 
+            WHERE u.company_id=c.id AND au.username IS NOT NULL
+          ) AS d
+        ) AS کارشناس_فروش
       FROM companies c
       {where_sql}
       ORDER BY c.created_at DESC, c.id DESC
