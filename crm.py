@@ -10,6 +10,7 @@ FardaPack Mini-CRM — Streamlit + SQLite (Streamlit 1.50 friendly)
 - 📥 ایمپورت اکسل مخاطبین در صفحه کاربران
 - ✅ عملیات گروهی در صفحه کاربران (تغییر کارشناس فروشِ چندتایی)
 - ♻️ بازیابی دیتابیس از بکاپ (.db یا .zip)
+- 🛒 بخش سفارشات و محصولات
 """
 
 import sqlite3
@@ -184,6 +185,7 @@ TASK_STATUSES = ["در حال انجام", "پایان یافته"]
 USER_STATUSES = ["بدون وضعیت", "در حال پیگیری", "پیش فاکتور", "مشتری شد"]
 COMPANY_STATUSES = ["بدون وضعیت", "در حال پیگیری", "پیش فاکتور", "مشتری شد"]
 LEVELS = ["هیچکدام", "طلایی", "نقره‌ای", "برنز"]
+ORDER_STATUSES = ["در حال پیگیری", "تایید شده", "کنسل شده", "رد شده"]
 
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=10)
@@ -301,12 +303,42 @@ def init_db():
         );
     """)
 
+    # ---- products ----
+    cur.execute(""" 
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT NOT NULL,
+            name TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+
+    # ---- orders ----
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            company_id INTEGER,
+            product_id INTEGER,
+            order_date TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'در حال پیگیری',
+            total_amount REAL NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL,
+            FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE SET NULL,
+            FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE SET NULL
+        );
+    """)
+
     # Indexes
     cur.execute("CREATE INDEX IF NOT EXISTS idx_users_company ON users(company_id);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_users_owner ON users(owner_id);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_calls_user_datetime ON calls(user_id, call_datetime);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_followups_user_due ON followups(user_id, due_date);")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(app_user_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_orders_company ON orders(company_id);")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_orders_product ON orders(product_id);")
 
     # Seed admin
     if cur.execute("SELECT COUNT(*) FROM app_users;").fetchone()[0] == 0:
@@ -732,6 +764,91 @@ def df_followups_by_filters(name_query, statuses, start, end,
 
     conn.close(); return df
 
+# ====================== توابع جدید برای سفارشات و محصولات ======================
+def list_products() -> List[Tuple[int, str, str]]:
+    """لیست تمام محصولات"""
+    conn = get_conn()
+    rows = conn.execute("SELECT id, category, name FROM products ORDER BY category, name;").fetchall()
+    conn.close()
+    return rows
+
+def create_product(category: str, name: str):
+    """ایجاد محصول جدید"""
+    conn = get_conn()
+    conn.execute("INSERT INTO products (category, name) VALUES (?, ?);", (category.strip(), name.strip()))
+    conn.commit()
+    conn.close()
+
+def update_product(product_id: int, category: str, name: str):
+    """ویرایش محصول"""
+    conn = get_conn()
+    conn.execute("UPDATE products SET category=?, name=? WHERE id=?;", (category.strip(), name.strip(), product_id))
+    conn.commit()
+    conn.close()
+
+def create_order(user_id: Optional[int], company_id: Optional[int], product_id: int, 
+                order_date: date, status: str, total_amount: float):
+    """ایجاد سفارش جدید"""
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO orders (user_id, company_id, product_id, order_date, status, total_amount)
+        VALUES (?, ?, ?, ?, ?, ?);
+    """, (user_id, company_id, product_id, order_date.isoformat(), status, total_amount))
+    conn.commit()
+    conn.close()
+
+def update_order_status(order_id: int, new_status: str):
+    """به‌روزرسانی وضعیت سفارش"""
+    conn = get_conn()
+    conn.execute("UPDATE orders SET status=? WHERE id=?;", (new_status, order_id))
+    conn.commit()
+    conn.close()
+
+def df_orders_by_filters(user_filter: Optional[int] = None, company_filter: Optional[int] = None,
+                        product_filter: Optional[int] = None, status_filter: Optional[str] = None):
+    """فیلتر کردن سفارشات"""
+    conn = get_conn()
+    params, where = [], ["1=1"]
+    
+    if user_filter:
+        where.append("o.user_id = ?"); params.append(user_filter)
+    if company_filter:
+        where.append("o.company_id = ?"); params.append(company_filter)
+    if product_filter:
+        where.append("o.product_id = ?"); params.append(product_filter)
+    if status_filter and status_filter != "همه":
+        where.append("o.status = ?"); params.append(status_filter)
+
+    where_sql = "WHERE " + " AND ".join(where)
+
+    df = pd.read_sql_query(f"""
+        SELECT 
+            o.id AS ID,
+            COALESCE(u.full_name, '—') AS کاربر,
+            COALESCE(c.name, '—') AS شرکت,
+            p.name AS محصول,
+            p.category AS دسته_بندی,
+            o.order_date AS تاریخ_سفارش,
+            o.total_amount AS مبلغ_کل,
+            o.status AS وضعیت,
+            o.created_at AS تاریخ_ایجاد
+        FROM orders o
+        LEFT JOIN users u ON u.id = o.user_id
+        LEFT JOIN companies c ON c.id = o.company_id
+        LEFT JOIN products p ON p.id = o.product_id
+        {where_sql}
+        ORDER BY o.created_at DESC;
+    """, conn, params=params)
+
+    # تبدیل تاریخ‌ها
+    if "تاریخ_سفارش" in df.columns:
+        df["تاریخ_سفارش"] = df["تاریخ_سفارش"].apply(format_date_only_with_weekday)
+    if "تاریخ_ایجاد" in df.columns:
+        df["تاریخ_ایجاد"] = df["تاریخ_ایجاد"].apply(format_gregorian_with_weekday)
+
+    conn.close()
+    return df
+
 # ====================== احراز هویت ======================
 if "auth" not in st.session_state:
     st.session_state.auth = None
@@ -828,7 +945,7 @@ def validate_db_file(path: str) -> Tuple[bool, str]:
             conn.close()
             return False, f"integrity_check ناموفق: {chk[0] if chk else 'نامشخص'}"
         # جداول ضروری
-        required = {"companies","users","calls","followups","app_users","sessions"}
+        required = {"companies","users","calls","followups","app_users","sessions","products","orders"}
         rows = cur.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()
         have = {r[0] for r in rows}
         missing = required - have
@@ -1269,15 +1386,19 @@ def page_dashboard():
     overdue = conn.execute("SELECT COUNT(*) FROM followups WHERE status='در حال انجام' AND date(due_date) < date('now');").fetchone()[0]
     total_companies = conn.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
     total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    total_orders = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+    total_products = conn.execute("SELECT COUNT(*) FROM products").fetchone()[0]
     conn.close()
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("تماس‌های امروز", calls_today)
     c2.metric("موفقِ امروز", calls_success_today)
     c3.metric("تماس‌های ۷ روز اخیر", last7)
     c4.metric("پیگیری‌های عقب‌افتاده", overdue)
-    c5, c6 = st.columns(2)
+    c5, c6, c7, c8 = st.columns(4)
     c5.metric("تعداد شرکت‌ها", total_companies)
     c6.metric("تعداد کاربران", total_users)
+    c7.metric("تعداد سفارشات", total_orders)
+    c8.metric("تعداد محصولات", total_products)
 
     st.divider()
     db_download_ui(DB_PATH)
@@ -1736,6 +1857,165 @@ def page_followups():
     except Exception:
         pass
 
+def page_orders():
+    """صفحه سفارشات"""
+    st.subheader("🛒 مدیریت سفارشات")
+
+    # --- افزودن سفارش جدید ---
+    with st.expander("➕ افزودن سفارش جدید", expanded=False):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            order_type = st.radio("نوع سفارش", ["کاربر", "شرکت"])
+            
+            if order_type == "کاربر":
+                users = list_users_basic(None)
+                user_choices = {"— انتخاب کاربر —": None}
+                user_choices.update({f"{user[1]}": user[0] for user in users})
+                selected_user = st.selectbox("انتخاب کاربر", list(user_choices.keys()))
+                user_id = user_choices[selected_user]
+                company_id = None
+            else:
+                companies = list_companies(None)
+                company_choices = {"— انتخاب شرکت —": None}
+                company_choices.update({f"{company[1]}": company[0] for company in companies})
+                selected_company = st.selectbox("انتخاب شرکت", list(company_choices.keys()))
+                company_id = company_choices[selected_company]
+                user_id = None
+
+        with col2:
+            order_date = st.date_input("تاریخ سفارش", datetime.today())
+            status = st.selectbox("وضعیت سفارش", ORDER_STATUSES, index=0)
+            total_amount = st.number_input("مبلغ کل سفارش", min_value=0.0, step=1000.0, value=0.0)
+
+        # انتخاب محصول
+        products = list_products()
+        product_choices = {"— انتخاب محصول —": None}
+        product_choices.update({f"{product[1]} ({product[2]})": product[0] for product in products})
+        selected_product = st.selectbox("انتخاب محصول", list(product_choices.keys()))
+        product_id = product_choices[selected_product]
+
+        if st.button("ثبت سفارش", type="primary"):
+            if (user_id is None and company_id is None) or product_id is None:
+                st.warning("لطفاً کاربر/شرکت و محصول را انتخاب کنید.")
+            elif total_amount <= 0:
+                st.warning("مبلغ سفارش باید بیشتر از صفر باشد.")
+            else:
+                create_order(user_id, company_id, product_id, order_date, status, total_amount)
+                st.toast("سفارش با موفقیت ثبت شد.", icon="✅")
+                st.rerun()
+
+    # --- فیلتر سفارشات ---
+    st.markdown("### فیلتر سفارشات")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        users = list_users_basic(None)
+        user_filter_choices = {"همه": None}
+        user_filter_choices.update({f"{user[1]}": user[0] for user in users})
+        filter_user = st.selectbox("فیلتر بر اساس کاربر", list(user_filter_choices.keys()))
+    
+    with col2:
+        companies = list_companies(None)
+        company_filter_choices = {"همه": None}
+        company_filter_choices.update({f"{company[1]}": company[0] for company in companies})
+        filter_company = st.selectbox("فیلتر بر اساس شرکت", list(company_filter_choices.keys()))
+    
+    with col3:
+        products = list_products()
+        product_filter_choices = {"همه": None}
+        product_filter_choices.update({f"{product[1]} ({product[2]})": product[0] for product in products})
+        filter_product = st.selectbox("فیلتر بر اساس محصول", list(product_filter_choices.keys()))
+    
+    with col4:
+        filter_status = st.selectbox("فیلتر بر اساس وضعیت", ["همه"] + ORDER_STATUSES)
+
+    # نمایش سفارشات
+    df_orders = df_orders_by_filters(
+        user_filter=user_filter_choices[filter_user],
+        company_filter=company_filter_choices[filter_company],
+        product_filter=product_filter_choices[filter_product],
+        status_filter=filter_status if filter_status != "همه" else None
+    )
+
+    if not df_orders.empty:
+        st.dataframe(df_orders, use_container_width=True)
+        
+        # امکان تغییر وضعیت سفارش
+        st.markdown("### تغییر وضعیت سفارش")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            order_ids = df_orders["ID"].tolist()
+            selected_order_id = st.selectbox("انتخاب سفارش برای ویرایش", order_ids)
+        
+        with col2:
+            current_status = df_orders[df_orders["ID"] == selected_order_id]["وضعیت"].iloc[0]
+            new_status = st.selectbox("وضعیت جدید", ORDER_STATUSES, 
+                                    index=ORDER_STATUSES.index(current_status) if current_status in ORDER_STATUSES else 0)
+        
+        if st.button("تغییر وضعیت"):
+            update_order_status(selected_order_id, new_status)
+            st.toast(f"وضعیت سفارش {selected_order_id} با موفقیت تغییر یافت.", icon="✅")
+            st.rerun()
+    else:
+        st.info("هیچ سفارشی یافت نشد.")
+
+def page_products():
+    """صفحه مدیریت محصولات"""
+    st.subheader("📦 مدیریت محصولات")
+
+    # --- افزودن محصول جدید ---
+    with st.expander("➕ افزودن محصول جدید", expanded=False):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            category = st.text_input("دسته‌بندی محصول *")
+        
+        with col2:
+            name = st.text_input("نام محصول *")
+
+        if st.button("اضافه کردن محصول", type="primary"):
+            if not category.strip() or not name.strip():
+                st.warning("لطفاً تمامی فیلدهای ضروری را پر کنید.")
+            else:
+                create_product(category, name)
+                st.toast("محصول با موفقیت اضافه شد.", icon="✅")
+                st.rerun()
+
+    # --- نمایش و مدیریت محصولات موجود ---
+    st.markdown("### محصولات موجود")
+    
+    products = list_products()
+    if products:
+        df_products = pd.DataFrame(products, columns=["ID", "دسته‌بندی", "نام", "تاریخ_ایجاد"])
+        df_products["تاریخ_ایجاد"] = df_products["تاریخ_ایجاد"].apply(format_gregorian_with_weekday)
+        
+        # ویرایش محصولات
+        edited_df = st.data_editor(
+            df_products,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "دسته‌بندی": st.column_config.TextColumn("دسته‌بندی"),
+                "نام": st.column_config.TextColumn("نام")
+            },
+            disabled=["ID", "تاریخ_ایجاد"],
+            key="products_editor"
+        )
+        
+        # تشخیص تغییرات و اعمال آنها
+        if not df_products.equals(edited_df):
+            for idx, row in edited_df.iterrows():
+                original_row = df_products.iloc[idx]
+                if not row.equals(original_row):
+                    update_product(int(row["ID"]), row["دسته‌بندی"], row["نام"])
+                    st.toast(f"محصول {row['نام']} به‌روزرسانی شد.", icon="💾")
+            st.rerun()
+    else:
+        st.info("هیچ محصولی ثبت نشده است.")
+
 def page_access():
     if not is_admin():
         st.info("این بخش فقط برای مدیر در دسترس است.")
@@ -1770,11 +2050,11 @@ else:
         st.markdown("**فردا پک**")
         header_userbox()
         role = st.session_state.auth["role"]
-        page = st.radio(
-            "منو",
-            ("داشبورد","شرکت‌ها","کاربران","تماس‌ها","پیگیری‌ها") + (("مدیریت دسترسی",) if role == "admin" else tuple()),
-            index=0
-        )
+        page_options = ["داشبورد", "شرکت‌ها", "کاربران", "تماس‌ها", "پیگیری‌ها", "سفارشات", "محصولات"]
+        if role == "admin":
+            page_options.append("مدیریت دسترسی")
+        
+        page = st.radio("منو", page_options, index=0)
 
     if page == "داشبورد":
         page_dashboard()
@@ -1786,5 +2066,9 @@ else:
         page_calls()
     elif page == "پیگیری‌ها":
         page_followups()
+    elif page == "سفارشات":
+        page_orders()
+    elif page == "محصولات":
+        page_products()
     elif page == "مدیریت دسترسی":
         page_access()
