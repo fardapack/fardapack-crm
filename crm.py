@@ -1989,8 +1989,8 @@ def page_products():
     
     products = list_products()
     if products:
-        df_products = pd.DataFrame(products, columns=["ID", "دسته‌بندی", "نام", "تاریخ_ایجاد"])
-        df_products["تاریخ_ایجاد"] = df_products["تاریخ_ایجاد"].apply(format_gregorian_with_weekday)
+        # 🔧 اصلاح: تابع list_products فقط 3 ستون برمی‌گرداند
+        df_products = pd.DataFrame(products, columns=["ID", "دسته‌بندی", "نام"])
         
         # ویرایش محصولات
         edited_df = st.data_editor(
@@ -2001,7 +2001,7 @@ def page_products():
                 "دسته‌بندی": st.column_config.TextColumn("دسته‌بندی"),
                 "نام": st.column_config.TextColumn("نام")
             },
-            disabled=["ID", "تاریخ_ایجاد"],
+            disabled=["ID"],
             key="products_editor"
         )
         
