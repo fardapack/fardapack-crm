@@ -182,7 +182,8 @@ def format_date_only_with_weekday(date_str: str) -> str:
 DB_PATH = "crm.db"
 CALL_STATUSES = ["ناموفق", "موفق", "خاموش", "رد تماس"]
 TASK_STATUSES = ["در حال انجام", "پایان یافته"]
-USER_STATUSES = ["بدون وضعیت", "در حال پیگیری", "پیش فاکتور", "مشتری شد"]
+# 🔧 1- اضافه کردن وضعیت "لغو" به وضعیت‌های کاربر
+USER_STATUSES = ["بدون وضعیت", "در حال پیگیری", "پیش فاکتور", "مشتری شد", "لغو"]
 COMPANY_STATUSES = ["بدون وضعیت", "در حال پیگیری", "پیش فاکتور", "مشتری شد"]
 LEVELS = ["هیچکدام", "طلایی", "نقره‌ای", "برنز"]
 ORDER_STATUSES = ["در حال پیگیری", "تایید شده", "کنسل شده", "رد شده"]
@@ -644,12 +645,14 @@ def df_companies_advanced(q_name, f_status, f_level, created_from, created_to,
 
     conn.close(); return df
 
-def df_users_advanced(first_q, last_q, created_from, created_to,
+def df_users_advanced(first_q, last_q, domain_q, created_from, created_to,
                       has_open_task, last_call_from, last_call_to,
                       statuses, owner_ids_filter: Optional[List[int]], enforce_owner: Optional[int]):
     conn = get_conn(); params, where = [], []
     if first_q: where.append("u.first_name LIKE ?"); params.append(f"%{first_q.strip()}%")
     if last_q:  where.append("u.last_name  LIKE ?"); params.append(f"%{last_q.strip()}%")
+    # 🔧 2- اضافه کردن فیلتر حوزه فعالیت
+    if domain_q: where.append("u.domain LIKE ?"); params.append(f"%{domain_q.strip()}%")
     if created_from: where.append("date(u.created_at) >= ?"); params.append(created_from.isoformat())
     if created_to:   where.append("date(u.created_at) <= ?"); params.append(created_to.isoformat())
     if statuses: where.append("u.status IN (" + ",".join(["?"]*len(statuses)) + ")"); params += statuses
@@ -804,6 +807,18 @@ def update_order_status(order_id: int, new_status: str):
     conn.commit()
     conn.close()
 
+def update_order(order_id: int, **fields):
+    """به‌روزرسانی سفارش"""
+    sets, params = [], []
+    for k, v in fields.items():
+        sets.append(f"{k}=?"); params.append(v)
+    if not sets:
+        return True, "بدون تغییر"
+    params.append(order_id)
+    conn = get_conn()
+    conn.execute(f"UPDATE orders SET {', '.join(sets)} WHERE id=?;", params)
+    conn.commit(); conn.close(); return True, "ذخیره شد."
+
 def df_orders_by_filters(user_filter: Optional[int] = None, company_filter: Optional[int] = None,
                         product_filter: Optional[int] = None, status_filter: Optional[str] = None):
     """فیلتر کردن سفارشات"""
@@ -845,6 +860,10 @@ def df_orders_by_filters(user_filter: Optional[int] = None, company_filter: Opti
         df["تاریخ_سفارش"] = df["تاریخ_سفارش"].apply(format_date_only_with_weekday)
     if "تاریخ_ایجاد" in df.columns:
         df["تاریخ_ایجاد"] = df["تاریخ_ایجاد"].apply(format_gregorian_with_weekday)
+
+    # 🔧 4- فرمت کردن مبلغ کل با جداکننده هزارگان
+    if "مبلغ_کل" in df.columns:
+        df["مبلغ_کل"] = df["مبلغ_کل"].apply(lambda x: f"{float(x):,.0f}" if pd.notna(x) else "")
 
     conn.close()
     return df
@@ -1376,6 +1395,94 @@ def dlg_company_quick_fu(company_id: int):
             create_followup(options[user_label], title, details, d, "در حال انجام", current_user_id())
             st.toast("پیگیری ثبت شد.", icon="✅")
 
+# ====================== دیالوگ‌های سفارشات ======================
+@st.dialog("ویرایش سفارش")
+def dlg_edit_order(order_id: int):
+    conn = get_conn()
+    row = conn.execute("""
+        SELECT user_id, company_id, product_id, order_date, status, total_amount
+        FROM orders WHERE id=?;
+    """, (order_id,)).fetchone()
+    conn.close()
+    
+    if not row:
+        st.warning("سفارش یافت نشد.")
+        return
+
+    user_id, company_id, product_id, order_date, status, total_amount = row
+
+    # لیست‌های مورد نیاز
+    users = list_users_basic(None)
+    companies = list_companies(None)
+    products = list_products()
+
+    user_choices = {"— انتخاب کاربر —": None}
+    user_choices.update({f"{user[1]}": user[0] for user in users})
+
+    company_choices = {"— انتخاب شرکت —": None}
+    company_choices.update({f"{company[1]}": company[0] for company in companies})
+
+    product_choices = {"— انتخاب محصول —": None}
+    product_choices.update({f"{product[1]} ({product[2]})": product[0] for product in products})
+
+    with st.form(f"edit_order_{order_id}", clear_on_submit=False):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            order_type = st.radio("نوع سفارش", ["کاربر", "شرکت"])
+            
+            if order_type == "کاربر":
+                selected_user = next((k for k, v in user_choices.items() if v == user_id), "— انتخاب کاربر —")
+                user_label = st.selectbox("انتخاب کاربر", list(user_choices.keys()), 
+                                        index=list(user_choices.keys()).index(selected_user) if selected_user in user_choices else 0)
+                user_id_val = user_choices[user_label]
+                company_id_val = None
+            else:
+                selected_company = next((k for k, v in company_choices.items() if v == company_id), "— انتخاب شرکت —")
+                company_label = st.selectbox("انتخاب شرکت", list(company_choices.keys()),
+                                           index=list(company_choices.keys()).index(selected_company) if selected_company in company_choices else 0)
+                company_id_val = company_choices[company_label]
+                user_id_val = None
+
+        with col2:
+            # تبدیل تاریخ از رشته به datetime
+            try:
+                order_date_val = datetime.strptime(order_date, "%Y-%m-%d").date()
+            except:
+                order_date_val = datetime.today().date()
+                
+            order_date_v = st.date_input("تاریخ سفارش", order_date_val)
+            status_v = st.selectbox("وضعیت سفارش", ORDER_STATUSES, 
+                                  index=ORDER_STATUSES.index(status) if status in ORDER_STATUSES else 0)
+            total_amount_v = st.number_input("مبلغ کل سفارش", min_value=0.0, step=1000.0, value=float(total_amount))
+
+        # انتخاب محصول
+        selected_product = next((k for k, v in product_choices.items() if v == product_id), "— انتخاب محصول —")
+        product_label = st.selectbox("انتخاب محصول", list(product_choices.keys()),
+                                   index=list(product_choices.keys()).index(selected_product) if selected_product in product_choices else 0)
+        product_id_val = product_choices[product_label]
+
+        if st.form_submit_button("ذخیره تغییرات"):
+            if (user_id_val is None and company_id_val is None) or product_id_val is None:
+                st.warning("لطفاً کاربر/شرکت و محصول را انتخاب کنید.")
+            elif total_amount_v <= 0:
+                st.warning("مبلغ سفارش باید بیشتر از صفر باشد.")
+            else:
+                ok, msg = update_order(
+                    order_id,
+                    user_id=user_id_val,
+                    company_id=company_id_val,
+                    product_id=product_id_val,
+                    order_date=order_date_v.isoformat(),
+                    status=status_v,
+                    total_amount=total_amount_v
+                )
+                if ok:
+                    st.toast("سفارش با موفقیت به‌روزرسانی شد.", icon="💾")
+                    st.rerun()
+                else:
+                    st.error(msg)
+
 # ====================== صفحات ======================
 def page_dashboard():
     st.subheader("داشبورد")
@@ -1630,14 +1737,17 @@ def page_users():
 
     # ------------------------- فیلتر کاربران -------------------------
     st.markdown("### فیلتر کاربران")
-    f1, f2, f3 = st.columns([1, 1, 1])
+    f1, f2, f3, f4 = st.columns([1, 1, 1, 1])  # 🔧 اضافه کردن ستون جدید برای حوزه فعالیت
     first_q = f1.text_input("نام")
     last_q  = f2.text_input("نام خانوادگی")
-    h_stat  = f3.multiselect("وضعیت کاربر", USER_STATUSES, default=[])
+    domain_q = f3.text_input("حوزه فعالیت")  # 🔧 2- اضافه کردن فیلتر حوزه فعالیت
+    h_stat  = f4.multiselect("وضعیت کاربر", USER_STATUSES, default=[])
+    
     g1, g2, g3 = st.columns([1, 1, 1])
     created_from_j = g1.text_input("از تاریخ ایجاد (شمسی)")
     created_to_j   = g2.text_input("تا تاریخ ایجاد (شمسی)")
     has_open_opt   = g3.selectbox("پیگیری باز دارد؟", ["— مهم نیست —", "بله", "خیر"], index=0)
+    
     k1, k2 = st.columns([1, 1])
     last_call_from_j = k1.text_input("از تاریخ آخرین تماس (شمسی)")
     last_call_to_j   = k2.text_input("تا تاریخ آخرین تماس (شمسی)")
@@ -1648,7 +1758,7 @@ def page_users():
     last_call_to   = jalali_str_to_date(last_call_to_j) if last_call_to_j else None
     has_open = None if has_open_opt == "— مهم نیست —" else (True if has_open_opt == "بله" else False)
 
-    df_all = df_users_advanced(first_q, last_q, created_from, created_to, has_open,
+    df_all = df_users_advanced(first_q, last_q, domain_q, created_from, created_to, has_open,
                                last_call_from, last_call_to, h_stat,
                                owner_ids_filter if owner_ids_filter else None,
                                only_owner)
@@ -1940,7 +2050,47 @@ def page_orders():
     )
 
     if not df_orders.empty:
-        st.dataframe(df_orders, use_container_width=True)
+        # 🔧 3- اضافه کردن ستون ویرایش برای سفارشات
+        base = df_orders.copy()
+        base["✏ ویرایش"] = False
+        
+        display_cols = ["ID", "کاربر", "شرکت", "محصول", "دسته_بندی", "تاریخ_سفارش", "مبلغ_کل", "وضعیت", "تاریخ_ایجاد", "✏ ویرایش"]
+        display_cols = [c for c in display_cols if c in base.columns]
+        
+        colcfg = {
+            "✏ ویرایش": st.column_config.CheckboxColumn("ویرایش", help="ویرایش سفارش", width="small"),
+            "مبلغ_کل": st.column_config.TextColumn("مبلغ کل", help="مبلغ سفارش با جداکننده هزارگان"),
+        }
+        
+        edited = st.data_editor(
+            base,
+            use_container_width=True,
+            hide_index=True,
+            column_order=display_cols,
+            column_config=colcfg,
+            disabled=[c for c in display_cols if c != "✏ ویرایش"],
+            key="orders_editor_widget"
+        )
+        
+        # تشخیص کلیک روی دکمه ویرایش
+        id_series = df_orders["ID"].reset_index(drop=True)
+        
+        def snapshot_orders(df_show: pd.DataFrame) -> Dict[int, bool]:
+            out: Dict[int, bool] = {}
+            for idx in range(len(df_show)):
+                order_id = int(id_series.iloc[idx])
+                out[order_id] = bool(df_show.iloc[idx]["✏ ویرایش"])
+            return out
+
+        prev_orders = st.session_state.get("orders_actions_prev", {})
+        curr_orders = snapshot_orders(edited)
+
+        for order_id, edit_clicked in curr_orders.items():
+            prev_state = prev_orders.get(order_id, False)
+            if edit_clicked and not prev_state:
+                dlg_edit_order(order_id)
+        
+        st.session_state["orders_actions_prev"] = curr_orders
         
         # امکان تغییر وضعیت سفارش
         st.markdown("### تغییر وضعیت سفارش")
