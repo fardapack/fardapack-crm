@@ -25,38 +25,57 @@ import uuid
 # 👇 اضافه شد
 import os, io, zipfile, shutil
 
-# ====================== صفحه و CSS (تغییرات برای اعمال کامل فونت و RTL بر جداول) ======================
+# ====================== صفحه و CSS (نسخه اصلاح شده برای جلوگیری از باگ نمایش کد و اعمال قوی تر) ======================
 st.set_page_config(page_title="FardaPack Mini-CRM", page_icon="📇", layout="wide")
+
+# ترفند تزریق استایل: استفاده از کد HTML/CSS که با ایموجی صفر-پهنا ترکیب شده تا در Streamlit نمایش داده نشود.
+# همچنین CSS قوی‌تری برای هدف قرار دادن عناصر داخلی Streamlit
 st.markdown(
-    """
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;600;700&display=swap" rel="stylesheet">
+    f"""
     <style>
-      html, body, [data-testid="stAppViewContainer"]{
-        direction: rtl; text-align: right !important;
+      /* فونت Vazirmatn */
+      @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;600;700&display=swap');
+      
+      html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] * {{
+        direction: rtl; 
+        text-align: right !important;
         font-family: "Vazirmatn", sans-serif !important;
-      }
-      [data-testid="stSidebar"] * { font-family: "Vazirmatn", sans-serif !important; }
+      }}
       
-      /* جداول RTL + اعمال صریح فونت Vazirmatn بر محتوای جداول */
-      [data-testid="stDataFrame"], [data-testid="stDataEditor"]{ 
-          direction: rtl !important; 
-          font-family: "Vazirmatn", sans-serif !important; /* اعمال مجدد فونت بر سلول‌ها */
-      }
-      
-      /* هدرهای جداول */
+      /* اعمال RTL و فونت بر جداول (Data Editor / DataFrame) */
+      [data-testid="stDataFrame"], [data-testid="stDataEditor"]{{
+          direction: rtl !important;
+          font-family: "Vazirmatn", sans-serif !important;
+      }}
+
+      /* هدرهای جداول (Column Headers) - ترازبندی راست */
       [data-testid="stDataFrame"] div[role="columnheader"],
-      [data-testid="stDataEditor"] div[role="columnheader"]{
-        text-align: right !important; justify-content: flex-end !important; font-weight: 700 !important;
-      }
+      [data-testid="stDataEditor"] div[role="columnheader"]{{
+        text-align: right !important; 
+        justify-content: flex-end !important; 
+        font-weight: 700 !important;
+        /* اطمینان از اعمال فونت بر هدر */
+        font-family: "Vazirmatn", sans-serif !important; 
+      }}
       
-      /* سلول‌های محتوای جداول */
+      /* سلول‌های محتوای جداول (Grid Cells) - ترازبندی راست */
       [data-testid="stDataFrame"] div[role="gridcell"],
-      [data-testid="stDataEditor"] div[role="gridcell"]{
-        text-align: right !important; justify-content: flex-end !important;
-      }
+      [data-testid="stDataEditor"] div[role="gridcell"]{{
+        text-align: right !important; 
+        justify-content: flex-end !important;
+        /* اطمینان از اعمال فونت بر محتوا */
+        font-family: "Vazirmatn", sans-serif !important; 
+      }}
+      
+      /* اطمینان از اعمال RTL و فونت بر روی Input و Selectbox های درون جدول */
+      [data-testid="stDataEditor"] input,
+      [data-testid="stDataEditor"] select {{
+        direction: rtl !important;
+        font-family: "Vazirmatn", sans-serif !important;
+      }}
+      
     </style>
+    {chr(10)}
     """,
     unsafe_allow_html=True
 )
