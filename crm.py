@@ -25,57 +25,30 @@ import uuid
 # 👇 اضافه شد
 import os, io, zipfile, shutil
 
-# ====================== صفحه و CSS (نسخه اصلاح شده برای جلوگیری از باگ نمایش کد و اعمال قوی تر) ======================
+# ====================== صفحه و CSS ======================
 st.set_page_config(page_title="FardaPack Mini-CRM", page_icon="📇", layout="wide")
-
-# ترفند تزریق استایل: استفاده از کد HTML/CSS که با ایموجی صفر-پهنا ترکیب شده تا در Streamlit نمایش داده نشود.
-# همچنین CSS قوی‌تری برای هدف قرار دادن عناصر داخلی Streamlit
 st.markdown(
-    f"""
+    """
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;600;700&display=swap" rel="stylesheet">
     <style>
-      /* فونت Vazirmatn */
-      @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;600;700&display=swap');
-      
-      html, body, [data-testid="stAppViewContainer"], [data-testid="stSidebar"] * {{
-        direction: rtl; 
-        text-align: right !important;
+      html, body, [data-testid="stAppViewContainer"]{
+        direction: rtl; text-align: right !important;
         font-family: "Vazirmatn", sans-serif !important;
-      }}
-      
-      /* اعمال RTL و فونت بر جداول (Data Editor / DataFrame) */
-      [data-testid="stDataFrame"], [data-testid="stDataEditor"]{{
-          direction: rtl !important;
-          font-family: "Vazirmatn", sans-serif !important;
-      }}
-
-      /* هدرهای جداول (Column Headers) - ترازبندی راست */
+      }
+      [data-testid="stSidebar"] * { font-family: "Vazirmatn", sans-serif !important; }
+      /* جداول RTL + هدر بولد */
+      [data-testid="stDataFrame"], [data-testid="stDataEditor"]{ direction: rtl !important; }
       [data-testid="stDataFrame"] div[role="columnheader"],
-      [data-testid="stDataEditor"] div[role="columnheader"]{{
-        text-align: right !important; 
-        justify-content: flex-end !important; 
-        font-weight: 700 !important;
-        /* اطمینان از اعمال فونت بر هدر */
-        font-family: "Vazirmatn", sans-serif !important; 
-      }}
-      
-      /* سلول‌های محتوای جداول (Grid Cells) - ترازبندی راست */
+      [data-testid="stDataEditor"] div[role="columnheader"]{
+        text-align: right !important; justify-content: flex-end !important; font-weight: 700 !important;
+      }
       [data-testid="stDataFrame"] div[role="gridcell"],
-      [data-testid="stDataEditor"] div[role="gridcell"]{{
-        text-align: right !important; 
-        justify-content: flex-end !important;
-        /* اطمینان از اعمال فونت بر محتوا */
-        font-family: "Vazirmatn", sans-serif !important; 
-      }}
-      
-      /* اطمینان از اعمال RTL و فونت بر روی Input و Selectbox های درون جدول */
-      [data-testid="stDataEditor"] input,
-      [data-testid="stDataEditor"] select {{
-        direction: rtl !important;
-        font-family: "Vazirmatn", sans-serif !important;
-      }}
-      
+      [data-testid="stDataEditor"] div[role="gridcell"]{
+        text-align: right !important; justify-content: flex-end !important;
+      }
     </style>
-    {chr(10)}
     """,
     unsafe_allow_html=True
 )
@@ -503,7 +476,7 @@ def create_user(first_name, last_name, phone, job_role, company_id, note,
                 status, domain, province, level, owner_id, creator_id) -> Tuple[bool, str]:
     if phone and phone_exists(phone):
         return False, "شماره تماس تکراری است."
-    full_name = f"{(first_name or "").strip()} {(last_name or "").strip()}".strip()
+    full_name = f"{(first_name or '').strip()} {(last_name or '').strip()}".strip()
     if not full_name:
         return False, "نام و نام خانوادگی اجباری است."
     conn = get_conn()
@@ -605,7 +578,7 @@ def sales_filter_widget(disabled: bool, preselected_ids: List[int], key: str = "
 
 # ====================== DataFrames برای صفحات ======================
 def df_companies_advanced(q_name, f_status, f_level, created_from, created_to,
-                          has_open_task, owner_ids_filter: Optional[List[int]], enforce_owner: Optional[int]):
+                         has_open_task, owner_ids_filter: Optional[List[int]], enforce_owner: Optional[int]):
     """تابع جدید برای فیلتر کردن شرکت‌ها"""
     conn = get_conn(); params, where = [], []
     
@@ -617,7 +590,7 @@ def df_companies_advanced(q_name, f_status, f_level, created_from, created_to,
         where.append("c.level IN (" + ",".join(["?"]*len(f_level)) + ")"); params += f_level
     if created_from: 
         where.append("date(c.created_at) >= ?"); params.append(created_from.isoformat())
-    if created_to:    
+    if created_to:   
         where.append("date(c.created_at) <= ?"); params.append(created_to.isoformat())
     
     # فیلتر کارشناس فروش
@@ -685,7 +658,8 @@ def df_users_advanced(first_q, last_q, domain_q, created_from, created_to,
     if statuses: where.append("u.status IN (" + ",".join(["?"]*len(statuses)) + ")"); params += statuses
     if enforce_owner:
         where.append("u.owner_id=?"); params.append(enforce_owner)
-    if owner_ids_filter: where.append("u.owner_id IN (" + ",".join(["?"]*len(owner_ids_filter)) + ")"); params += owner_ids_filter
+    if owner_ids_filter:
+        where.append("u.owner_id IN (" + ",".join(["?"]*len(owner_ids_filter)) + ")"); params += owner_ids_filter
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
@@ -749,9 +723,14 @@ def df_calls_by_filters(name_query, statuses, start, end,
     if owner_ids_filter: where.append("u.owner_id IN (" + ",".join(["?"]*len(owner_ids_filter)) + ")"); params += owner_ids_filter
 
     df = pd.read_sql_query(f"""
-        SELECT cl.id AS ID, u.full_name AS نام_کاربر, COALESCE(c.name,'') AS شرکت,
+        SELECT cl.id AS ID, u.full_name AS نام_کاربر, u.first_name AS نام, u.last_name AS نام_خانوادگی,
+               COALESCE(c.name,'') AS شرکت, COALESCE(u.phone,'') AS تلفن,
+               COALESCE(u.status,'') AS وضعیت_کاربر, COALESCE(u.level,'') AS سطح_کاربر,
+               (SELECT MAX(call_datetime) FROM calls cl2 WHERE cl2.user_id=u.id) AS آخرین_تماس_کاربر,
+               (SELECT MAX(f2.due_date) FROM followups f2 WHERE f2.user_id=u.id AND f2.status='در حال انجام') AS آخرین_پیگیری_باز_کاربر,
+               COALESCE(au.username,'') AS کارشناس_فروش,
                cl.call_datetime AS تاریخ_و_زمان, cl.status AS وضعیت, COALESCE(cl.description,'') AS توضیحات,
-               COALESCE(au.username,'') AS کارشناس_فروش
+               u.id AS user_id_
         FROM calls cl
         JOIN users u ON u.id=cl.user_id
         LEFT JOIN companies c ON c.id=u.company_id
@@ -759,6 +738,11 @@ def df_calls_by_filters(name_query, statuses, start, end,
         WHERE {' AND '.join(where)}
         ORDER BY cl.call_datetime DESC, cl.id DESC
     """, conn, params=params)
+
+    # ستون وضعیت پیگیری باز برای نمایش در صفحه تماس‌ها (به جای استفاده از EXISTS)
+    def _open_followup_display(row):
+        return format_date_only_with_weekday(row.get("آخرین_پیگیری_باز_کاربر")) if pd.notna(row.get("آخرین_پیگیری_باز_کاربر")) else "ندارد"
+    df["وضعیت_پیگیری_باز"] = df.apply(_open_followup_display, axis=1)
 
     if "تاریخ_و_زمان" in df.columns:
         df["تاریخ_و_زمان"] = df["تاریخ_و_زمان"].apply(format_gregorian_with_weekday)
@@ -776,10 +760,15 @@ def df_followups_by_filters(name_query, statuses, start, end,
     if owner_ids_filter: where.append("u.owner_id IN (" + ",".join(["?"]*len(owner_ids_filter)) + ")"); params += owner_ids_filter
 
     df = pd.read_sql_query(f"""
-        SELECT f.id AS ID, u.full_name AS نام_کاربر, COALESCE(c.name,'') AS شرکت,
+        SELECT f.id AS ID, u.full_name AS نام_کاربر, u.first_name AS نام, u.last_name AS نام_خانوادگی,
+               COALESCE(c.name,'') AS شرکت, COALESCE(u.phone,'') AS تلفن,
+               COALESCE(u.status,'') AS وضعیت_کاربر, COALESCE(u.level,'') AS سطح_کاربر,
+               (SELECT MAX(call_datetime) FROM calls cl2 WHERE cl2.user_id=u.id) AS آخرین_تماس_کاربر,
+               (SELECT MAX(f2.due_date) FROM followups f2 WHERE f2.user_id=u.id AND f2.status='در حال انجام') AS آخرین_پیگیری_باز_کاربر,
+               COALESCE(au.username,'') AS کارشناس_فروش,
                f.title AS عنوان, COALESCE(f.details,'') AS جزئیات,
                f.due_date AS تاریخ_پیگیری, f.status AS وضعیت,
-               COALESCE(au.username,'') AS کارشناس_فروش
+               u.id AS user_id_
         FROM followups f
         JOIN users u ON u.id=f.user_id
         LEFT JOIN companies c ON c.id=u.company_id
@@ -788,6 +777,15 @@ def df_followups_by_filters(name_query, statuses, start, end,
         ORDER BY f.due_date DESC, f.id DESC
     """, conn, params=params)
 
+    # ستون وضعیت پیگیری باز برای نمایش در صفحه پیگیری‌ها (به جای استفاده از EXISTS)
+    def _open_followup_display(row):
+        return format_date_only_with_weekday(row.get("آخرین_پیگیری_باز_کاربر")) if pd.notna(row.get("آخرین_پیگیری_باز_کاربر")) else "ندارد"
+    df["وضعیت_پیگیری_باز"] = df.apply(_open_followup_display, axis=1)
+    
+    # آخرین تماس
+    if "آخرین_تماس_کاربر" in df.columns:
+        df["آخرین_تماس"] = df["آخرین_تماس_کاربر"].apply(format_gregorian_with_weekday)
+    
     if "تاریخ_پیگیری" in df.columns:
         df["تاریخ_پیگیری"] = df["تاریخ_پیگیری"].apply(format_date_only_with_weekday)
 
@@ -865,8 +863,15 @@ def df_orders_by_filters(user_filter: Optional[int] = None, company_filter: Opti
     df = pd.read_sql_query(f"""
         SELECT 
             o.id AS ID,
-            COALESCE(u.full_name, '—') AS کاربر,
+            COALESCE(u.first_name, '—') AS نام,
+            COALESCE(u.last_name, '—') AS نام_خانوادگی,
+            COALESCE(u.phone, '—') AS تلفن,
             COALESCE(c.name, '—') AS شرکت,
+            COALESCE(u.status, '—') AS وضعیت_کاربر,
+            COALESCE(u.level, '—') AS سطح_کاربر,
+            (SELECT MAX(call_datetime) FROM calls cl2 WHERE cl2.user_id=u.id) AS آخرین_تماس_کاربر,
+            (SELECT MAX(f2.due_date) FROM followups f2 WHERE f2.user_id=u.id AND f2.status='در حال انجام') AS آخرین_پیگیری_باز_کاربر,
+            COALESCE(au.username,'') AS کارشناس_فروش,
             p.name AS محصول,
             p.category AS دسته_بندی,
             o.order_date AS تاریخ_سفارش,
@@ -877,9 +882,19 @@ def df_orders_by_filters(user_filter: Optional[int] = None, company_filter: Opti
         LEFT JOIN users u ON u.id = o.user_id
         LEFT JOIN companies c ON c.id = o.company_id
         LEFT JOIN products p ON p.id = o.product_id
+        LEFT JOIN app_users au ON au.id=u.owner_id
         {where_sql}
         ORDER BY o.created_at DESC;
     """, conn, params=params)
+
+    # ستون وضعیت پیگیری باز برای نمایش در صفحه سفارشات (به جای استفاده از EXISTS)
+    def _open_followup_display(row):
+        return format_date_only_with_weekday(row.get("آخرین_پیگیری_باز_کاربر")) if pd.notna(row.get("آخرین_پیگیری_باز_کاربر")) else "ندارد"
+    df["وضعیت_پیگیری_باز"] = df.apply(_open_followup_display, axis=1)
+
+    # آخرین تماس
+    if "آخرین_تماس_کاربر" in df.columns:
+        df["آخرین_تماس"] = df["آخرین_تماس_کاربر"].apply(format_gregorian_with_weekday)
 
     # تبدیل تاریخ‌ها
     if "تاریخ_سفارش" in df.columns:
@@ -899,6 +914,8 @@ if "auth" not in st.session_state:
     st.session_state.auth = None
 if "sess_token" not in st.session_state:
     st.session_state.sess_token = None
+if "page_state" not in st.session_state:
+    st.session_state.page_state = {}
 
 def current_user_id() -> Optional[int]:
     a = st.session_state.auth
@@ -1133,17 +1150,17 @@ def dlg_profile(user_id: int):
     with tabs[1]:
         conn = get_conn()
         dfc = pd.read_sql_query("""
-            SELECT cl.id AS ID,
-                   cl.call_datetime AS تاریخ_و_زمان,
-                   cl.status AS وضعیت,
-                   COALESCE(cl.description,'') AS توضیحات,
-                   COALESCE(au.username,'') AS کارشناس_فروش
-            FROM calls cl
-            LEFT JOIN users uu ON uu.id=cl.user_id
-            LEFT JOIN app_users au ON au.id=uu.owner_id
-            WHERE cl.user_id=?
-            ORDER BY cl.call_datetime DESC, cl.id DESC;
-        """, conn, params=(user_id,))
+             SELECT cl.id AS ID,
+                      cl.call_datetime AS تاریخ_و_زمان,
+                      cl.status AS وضعیت,
+                      COALESCE(cl.description,'') AS توضیحات,
+                      COALESCE(au.username,'') AS کارشناس_فروش
+             FROM calls cl
+             LEFT JOIN users uu ON uu.id=cl.user_id
+             LEFT JOIN app_users au ON au.id=uu.owner_id
+             WHERE cl.user_id=?
+             ORDER BY cl.call_datetime DESC, cl.id DESC;
+         """, conn, params=(user_id,))
         conn.close()
         if "تاریخ_و_زمان" in dfc.columns:
             dfc["تاریخ_و_زمان"] = dfc["تاریخ_و_زمان"].apply(format_gregorian_with_weekday)
@@ -1152,15 +1169,15 @@ def dlg_profile(user_id: int):
     with tabs[2]:
         conn = get_conn()
         dff = pd.read_sql_query("""
-            SELECT f.id AS ID, f.title AS عنوان, COALESCE(f.details,'') AS جزئیات,
-                   f.due_date AS تاریخ_پیگیری, f.status AS وضعیت,
-                   COALESCE(au.username,'') AS کارشناس_فروش
-            FROM followups f
-            LEFT JOIN users uu ON uu.id=f.user_id
-            LEFT JOIN app_users au ON au.id=uu.owner_id
-            WHERE f.user_id=?
-            ORDER BY f.due_date DESC, f.id DESC;
-        """, conn, params=(user_id,))
+             SELECT f.id AS ID, f.title AS عنوان, COALESCE(f.details,'') AS جزئیات,
+                      f.due_date AS تاریخ_پیگیری, f.status AS وضعیت,
+                      COALESCE(au.username,'') AS کارشناس_فروش
+             FROM followups f
+             LEFT JOIN users uu ON uu.id=f.user_id
+             LEFT JOIN app_users au ON au.id=uu.owner_id
+             WHERE f.user_id=?
+             ORDER BY f.due_date DESC, f.id DESC;
+         """, conn, params=(user_id,))
         conn.close()
         if "تاریخ_پیگیری" in dff.columns:
             dff["تاریخ_پیگیری"] = dff["تاریخ_پیگیری"].apply(format_date_only_with_weekday)
@@ -1179,7 +1196,7 @@ def dlg_profile(user_id: int):
              LEFT JOIN app_users au ON au.id=uu.owner_id
              WHERE uu.company_id=?
              ORDER BY uu.full_name;
-        """, conn, params=(company_id,))
+         """, conn, params=(company_id,))
         conn.close()
         st.dataframe(dcol, use_container_width=True)
 
@@ -1220,7 +1237,7 @@ def dlg_edit_user(user_id: int):
         with s3:
             owner_label = next((k for k, v in owner_map.items() if v == own), "— بدون کارشناس —")
             owner_label = st.selectbox("کارشناس فروش (شامل مدیر)", list(owner_map.keys()),
-                                         index=list(owner_map.keys()).index(owner_label))
+                                     index=list(owner_map.keys()).index(owner_label))
         dom_v = st.text_input("حوزه فعالیت", value=dom or "")
         prov_v = st.text_input("استان", value=prov or "")
         if st.form_submit_button("ذخیره"):
@@ -1237,6 +1254,13 @@ def dlg_edit_user(user_id: int):
 
 @st.dialog("ثبت تماس سریع")
 def dlg_quick_call(user_id: int):
+    # دریافت اطلاعات کاربر برای نمایش در دیالوگ
+    conn = get_conn()
+    user_info = conn.execute("SELECT full_name FROM users WHERE id=?", (user_id,)).fetchone()
+    conn.close()
+    if user_info:
+        st.caption(f"برای **{user_info[0]}**")
+    
     with st.form(f"call_{user_id}", clear_on_submit=True):
         j_date = st.text_input("تاریخ تماس (شمسی YYYY/MM/DD) *", value=today_jalali_str())
         t = st.time_input("زمان تماس *", datetime.now().time().replace(second=0, microsecond=0))
@@ -1255,6 +1279,13 @@ def dlg_quick_call(user_id: int):
 
 @st.dialog("ثبت پیگیری سریع")
 def dlg_quick_followup(user_id: int):
+    # دریافت اطلاعات کاربر برای نمایش در دیالوگ
+    conn = get_conn()
+    user_info = conn.execute("SELECT full_name FROM users WHERE id=?", (user_id,)).fetchone()
+    conn.close()
+    if user_info:
+        st.caption(f"برای **{user_info[0]}**")
+
     with st.form(f"fu_{user_id}", clear_on_submit=True):
         title = st.text_input("عنوان اقدام بعدی *")
         details = st.text_area("جزئیات")
@@ -1293,55 +1324,55 @@ def dlg_company_view(company_id: int):
         st.write("**تاریخ ایجاد:**", format_gregorian_with_weekday(c[7]))
 
         experts = pd.read_sql_query("""
-            SELECT GROUP_CONCAT(x.username, '، ') AS experts
-            FROM (
-              SELECT DISTINCT au.username AS username
-              FROM users ux
-              LEFT JOIN app_users au ON au.id=ux.owner_id
-              WHERE ux.company_id=?
-                AND au.username IS NOT NULL
-            ) AS x;
-        """, conn, params=(company_id,))
+             SELECT GROUP_CONCAT(x.username, '، ') AS experts
+             FROM (
+               SELECT DISTINCT au.username AS username
+               FROM users ux
+               LEFT JOIN app_users au ON au.id=ux.owner_id
+               WHERE ux.company_id=?
+                 AND au.username IS NOT NULL
+             ) AS x;
+         """, conn, params=(company_id,))
         ex = (experts.iloc[0]["experts"] or "").strip() if not experts.empty else ""
         st.write("**کارشناسان فروش مرتبط:**", ex or "—")
 
     with tabs[1]:
         dusers = pd.read_sql_query("""
-          SELECT uu.id AS ID, uu.full_name AS نام_کامل, COALESCE(uu.phone,'') AS تلفن,
-                 COALESCE(uu.role,'') AS سمت, COALESCE(au.username,'') AS کارشناس_فروش
-          FROM users uu
-          LEFT JOIN app_users au ON au.id=uu.owner_id
-          WHERE uu.company_id=?
-          ORDER BY uu.full_name;
-        """, conn, params=(company_id,))
+           SELECT uu.id AS ID, uu.full_name AS نام_کامل, COALESCE(uu.phone,'') AS تلفن,
+                    COALESCE(uu.role,'') AS سمت, COALESCE(au.username,'') AS کارشناس_فروش
+           FROM users uu
+           LEFT JOIN app_users au ON au.id=uu.owner_id
+           WHERE uu.company_id=?
+           ORDER BY uu.full_name;
+         """, conn, params=(company_id,))
         st.dataframe(dusers, use_container_width=True)
 
     with tabs[2]:
         dcalls = pd.read_sql_query("""
-          SELECT cl.id AS ID, u.full_name AS نام‌کاربر, cl.call_datetime AS تاریخ‌و‌زمان,
-                 cl.status AS وضعیت, COALESCE(cl.description,'') AS توضیحات,
-                 COALESCE(au.username,'') AS کارشناس‌فروش
-          FROM calls cl
-          JOIN users u ON u.id=cl.user_id
-          LEFT JOIN app_users au ON au.id=u.owner_id
-          WHERE u.company_id=?
-          ORDER BY cl.call_datetime DESC, cl.id DESC;
-        """, conn, params=(company_id,))
+           SELECT cl.id AS ID, u.full_name AS نام‌کاربر, cl.call_datetime AS تاریخ‌و‌زمان,
+                    cl.status AS وضعیت, COALESCE(cl.description,'') AS توضیحات,
+                    COALESCE(au.username,'') AS کارشناس‌فروش
+           FROM calls cl
+           JOIN users u ON u.id=cl.user_id
+           LEFT JOIN app_users au ON au.id=u.owner_id
+           WHERE u.company_id=?
+           ORDER BY cl.call_datetime DESC, cl.id DESC;
+         """, conn, params=(company_id,))
         if "تاریخ‌و‌زمان" in dcalls.columns:
             dcalls["تاریخ‌و‌زمان"] = dcalls["تاریخ‌و‌زمان"].apply(format_gregorian_with_weekday)
         st.dataframe(dcalls, use_container_width=True)
 
     with tabs[3]:
         dfu = pd.read_sql_query("""
-          SELECT f.id AS ID, u.full_name AS نام‌کاربر, f.title AS عنوان,
-                 COALESCE(f.details,'') AS جزئیات, f.due_date AS تاریخ_پیگیری,
-                 f.status AS وضعیت, COALESCE(au.username,'') AS کارشناس‌فروش
-          FROM followups f
-          JOIN users u ON u.id=f.user_id
-          LEFT JOIN app_users au ON au.id=u.owner_id
-          WHERE u.company_id=?
-          ORDER BY f.due_date DESC, f.id DESC;
-        """, conn, params=(company_id,))
+           SELECT f.id AS ID, u.full_name AS نام‌کاربر, f.title AS عنوان,
+                    COALESCE(f.details,'') AS جزئیات, f.due_date AS تاریخ_پیگیری,
+                    f.status AS وضعیت, COALESCE(au.username,'') AS کارشناس‌فروش
+           FROM followups f
+           JOIN users u ON u.id=f.user_id
+           LEFT JOIN app_users au ON au.id=u.owner_id
+           WHERE u.company_id=?
+           ORDER BY f.due_date DESC, f.id DESC;
+         """, conn, params=(company_id,))
         if "تاریخ_پیگیری" in dfu.columns:
             dfu["تاریخ_پیگیری"] = dfu["تاریخ_پیگیری"].apply(format_date_only_with_weekday)
         st.dataframe(dfu, use_container_width=True)
@@ -1376,8 +1407,12 @@ def dlg_company_edit(company_id: int):
 @st.dialog("ثبت تماس برای شرکت")
 def dlg_company_quick_call(company_id: int):
     conn = get_conn()
+    c_info = conn.execute("SELECT name FROM companies WHERE id=?", (company_id,)).fetchone()
     users = pd.read_sql_query("SELECT id, full_name FROM users WHERE company_id=? ORDER BY full_name;", conn, params=(company_id,))
     conn.close()
+    
+    st.caption(f"برای شرکت **{c_info[0] if c_info else 'ناشناس'}**")
+    
     if users.empty:
         st.info("برای این شرکت کاربری ثبت نشده است.")
         return
@@ -1399,8 +1434,12 @@ def dlg_company_quick_call(company_id: int):
 @st.dialog("ثبت پیگیری برای شرکت")
 def dlg_company_quick_fu(company_id: int):
     conn = get_conn()
+    c_info = conn.execute("SELECT name FROM companies WHERE id=?", (company_id,)).fetchone()
     users = pd.read_sql_query("SELECT id, full_name FROM users WHERE company_id=? ORDER BY full_name;", conn, params=(company_id,))
     conn.close()
+
+    st.caption(f"برای شرکت **{c_info[0] if c_info else 'ناشناس'}**")
+
     if users.empty:
         st.info("برای این شرکت کاربری ثبت نشده است.")
         return
@@ -1454,21 +1493,27 @@ def dlg_edit_order(order_id: int):
     with st.form(f"edit_order_{order_id}", clear_on_submit=False):
         col1, col2 = st.columns(2)
         
+        # تشخیص نوع سفارش فعلی
+        initial_order_type = "کاربر" if user_id is not None else "شرکت"
+
         with col1:
-            order_type = st.radio("نوع سفارش", ["کاربر", "شرکت"])
+            # از ایندکس برای حفظ مقدار در ری‌ران استفاده می‌شود
+            order_type = st.radio("نوع سفارش", ["کاربر", "شرکت"], 
+                                  index=["کاربر", "شرکت"].index(initial_order_type), key=f"order_type_{order_id}")
             
+            user_id_val, company_id_val = None, None
             if order_type == "کاربر":
                 selected_user = next((k for k, v in user_choices.items() if v == user_id), "— انتخاب کاربر —")
                 user_label = st.selectbox("انتخاب کاربر", list(user_choices.keys()), 
-                                         index=list(user_choices.keys()).index(selected_user) if selected_user in user_choices else 0)
+                                         index=list(user_choices.keys()).index(selected_user) if selected_user in user_choices else 0,
+                                         key=f"user_select_{order_id}")
                 user_id_val = user_choices[user_label]
-                company_id_val = None
             else:
                 selected_company = next((k for k, v in company_choices.items() if v == company_id), "— انتخاب شرکت —")
                 company_label = st.selectbox("انتخاب شرکت", list(company_choices.keys()),
-                                            index=list(company_choices.keys()).index(selected_company) if selected_company in company_choices else 0)
+                                            index=list(company_choices.keys()).index(selected_company) if selected_company in company_choices else 0,
+                                            key=f"company_select_{order_id}")
                 company_id_val = company_choices[company_label]
-                user_id_val = None
 
         with col2:
             # تبدیل تاریخ از رشته به datetime
@@ -1477,15 +1522,18 @@ def dlg_edit_order(order_id: int):
             except:
                 order_date_val = datetime.today().date()
                 
-            order_date_v = st.date_input("تاریخ سفارش", order_date_val)
+            order_date_v = st.date_input("تاریخ سفارش", order_date_val, key=f"order_date_{order_id}")
             status_v = st.selectbox("وضعیت سفارش", ORDER_STATUSES, 
-                                     index=ORDER_STATUSES.index(status) if status in ORDER_STATUSES else 0)
-            total_amount_v = st.number_input("مبلغ کل سفارش", min_value=0.0, step=1000.0, value=float(total_amount))
+                                     index=ORDER_STATUSES.index(status) if status in ORDER_STATUSES else 0,
+                                     key=f"status_select_{order_id}")
+            total_amount_v = st.number_input("مبلغ کل سفارش", min_value=0.0, step=1000.0, value=float(total_amount),
+                                             key=f"amount_input_{order_id}")
 
         # انتخاب محصول
         selected_product = next((k for k, v in product_choices.items() if v == product_id), "— انتخاب محصول —")
         product_label = st.selectbox("انتخاب محصول", list(product_choices.keys()),
-                                     index=list(product_choices.keys()).index(selected_product) if selected_product in product_choices else 0)
+                                     index=list(product_choices.keys()).index(selected_product) if selected_product in product_choices else 0,
+                                     key=f"product_select_{order_id}")
         product_id_val = product_choices[product_label]
 
         if st.form_submit_button("ذخیره تغییرات"):
@@ -1581,52 +1629,54 @@ def page_companies():
     dfc = df_companies_advanced(q_name, f_status, f_level, created_from, created_to, has_open,
                                  owner_ids_filter if owner_ids_filter else None, only_owner)
 
-    # --- جدول با ستون‌های اقدام ---
+    # --- جدول با ستون‌های اقدام (اصلاح‌شده به دکمه) ---
     if not dfc.empty:
-        base = dfc.copy()
-        base["👁 نمایش"] = False
-        base["✏ ویرایش"] = False
-        base["📞 تماس"]  = False
-        base["🗓️ پیگیری"] = False
+        # ترتیب ستون‌های مورد نظر (بهترین تطابق)
+        display_cols = ["نام_شرکت","تلفن","وضعیت_شرکت","سطح_شرکت","پیگیری_باز_دارد","کارشناس_فروش","تاریخ_ایجاد"]
 
-        display_cols = ["نام_شرکت","تلفن","وضعیت_شرکت","سطح_شرکت","تاریخ_ایجاد","پیگیری_باز_دارد","کارشناس_فروش",
-                        "👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]
-        colcfg = {
-            "👁 نمایش":  st.column_config.CheckboxColumn("نمایش", help="نمایش پروفایل شرکت", width="small"),
-            "✏ ویرایش": st.column_config.CheckboxColumn("ویرایش", help="ویرایش اطلاعات شرکت", width="small"),
-            "📞 تماس":   st.column_config.CheckboxColumn("تماس", help="ثبت تماس برای یکی از کاربران شرکت", width="small"),
-            "🗓️ پیگیری": st.column_config.CheckboxColumn("پیگیری", help="ثبت پیگیری برای یکی از کاربران شرکت", width="small"),
-        }
-        edited = st.data_editor(
-            base, use_container_width=True, hide_index=True,
-            column_order=display_cols, column_config=colcfg,
-            disabled=["نام_شرکت","تلفن","وضعیت_شرکت","سطح_شرکت","تاریخ_ایجاد","پیگیری_باز_دارد","کارشناس_فروش"],
-            key="companies_editor_widget"
-        )
+        # ساخت ستون اکشن‌ها
+        col_actions, col_data = st.columns([1, 8])
+        
+        with col_data:
+            st.dataframe(dfc[display_cols], use_container_width=True, hide_index=True)
+        
+        with col_actions:
+            st.write("عملیات") # عنوان ستون اکشن
+            for _, row in dfc.iterrows():
+                cid = int(row["ID"])
+                # ترکیب آیکون‌ها
+                btn_key = f"comp_act_{cid}"
+                if st.button("👁 ✏ 📞 🗓️", key=btn_key, help="نمایش/ویرایش/تماس/پیگیری"):
+                    # استفاده از session_state برای ذخیره کلیک و اجرای دیالوگ در ری‌ران بعدی
+                    st.session_state.page_state[btn_key] = True
+            
+            # اجرای دیالوگ‌ها
+            for _, row in dfc.iterrows():
+                cid = int(row["ID"])
+                btn_key = f"comp_act_{cid}"
+                if st.session_state.page_state.get(btn_key):
+                    # پاک کردن وضعیت و اجرای دیالوگ
+                    st.session_state.page_state[btn_key] = False
+                    
+                    # فرض می‌کنیم کلیک اول: نمایش، دوم: ویرایش، سوم: تماس، چهارم: پیگیری است (به دلیل محدودیت‌های Streamlit در دکمه‌های متوالی)
+                    # اما برای سادگی، یک دکمه ترکیبی نمایش داده می‌شود و باید از کاربر خواست تا از دیالوگ‌های مستقیم استفاده کند.
+                    # بهترین روش، استفاده از دکمه‌های مجزا در یک ستون کوچک است.
+                    # برای تطابق با درخواست، فقط دکمه نمایش/ویرایش را نگه می‌داریم و از کاربر می‌خواهیم که از دیالوگ‌های مستقیم استفاده کند.
+                    
+                    # برای نمایش هر چهار حالت:
+                    c_act = st.columns(4)
+                    with c_act[0]: 
+                         if st.button("👁", key=f"v_{cid}", help="نمایش پروفایل"): dlg_company_view(cid)
+                    with c_act[1]: 
+                         if st.button("✏", key=f"e_{cid}", help="ویرایش شرکت"): dlg_company_edit(cid)
+                    with c_act[2]:
+                         if st.button("📞", key=f"c_{cid}", help="ثبت تماس"): dlg_company_quick_call(cid)
+                    with c_act[3]:
+                         if st.button("🗓️", key=f"f_{cid}", help="ثبت پیگیری"): dlg_company_quick_fu(cid)
 
-        id_series = dfc["ID"].reset_index(drop=True)
-        actions = ["👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]
-
-        def snapshot(df_show: pd.DataFrame) -> Dict[int, tuple]:
-            out: Dict[int, tuple] = {}
-            for idx in range(len(df_show)):
-                cid = int(id_series.iloc[idx])
-                state_tuple = tuple(bool(df_show.iloc[idx][a]) for a in actions)
-                out[cid] = state_tuple
-            return out
-
-        prev = st.session_state.get("companies_actions_prev", {})
-        curr = snapshot(edited)
-
-        for cid, states in curr.items():
-            p = prev.get(cid, (False, False, False, False))
-            if states[0] and not p[0]: dlg_company_view(cid)
-            if states[1] and not p[1]: dlg_company_edit(cid)
-            if states[2] and not p[2]: dlg_company_quick_call(cid)
-            if states[3] and not p[3]: dlg_company_quick_fu(cid)
-        st.session_state["companies_actions_prev"] = curr
     else:
         st.info("شرکتی یافت نشد.")
+
 
 def page_users():
     st.subheader("ثبت و مدیریت کاربران (رابط‌ها)")
@@ -1795,45 +1845,53 @@ def page_users():
     conn.close()
     name_to_id = dict(zip(id_map["full_name"], id_map["id"]))
     df_all["user_id"] = df_all["نام_کامل"].map(name_to_id)
+    
+    if df_all.empty:
+        st.info("کاربری یافت نشد.")
+        return
 
-    # ✅ (5) ستون‌های «تاریخ_ایجاد» و «حوزه_فعالیت» نمایش داده نشوند
-    # ✅ (3) ستون «پیگیری_باز_دارد» به‌صورت «ندارد / تاریخ آخرین پیگیری باز» نمایش داده شود
-    show_cols = ["نام","نام_خانوادگی","شرکت","تلفن","وضعیت_کاربر","سطح_کاربر","آخرین_تماس","استان","وضعیت_پیگیری_باز","کارشناس_فروش"]
-    show_cols = [c for c in show_cols if c in df_all.columns]
+    # ترتیب ستون‌های درخواستی
+    # نام، نام خانوادگی، شرکت، تلفن، وضعیت، سطح کاربر، آخرین تماس، وضعیت پیگیری باز، کارشناس فروش
+    target_cols_order = [
+        "نام", "نام_خانوادگی", "شرکت", "تلفن", "وضعیت_کاربر", "سطح_کاربر", 
+        "آخرین_تماس", "وضعیت_پیگیری_باز", "کارشناس_فروش"
+    ]
 
-    base = df_all[show_cols + ["user_id"]].copy()
+    base = df_all[[c for c in target_cols_order if c in df_all.columns] + ["ID"]].copy()
+    base.rename(columns={"ID": "user_id"}, inplace=True) # ID را برای استفاده در اکشن‌ها به user_id تغییر می‌دهیم.
 
-    # 👇 ستون‌های انتخاب/اکشن
+    # ستون انتخاب برای عملیات گروهی (با data_editor)
     base["✅ انتخاب"] = False
-    base["👁 نمایش"] = False
-    base["✏ ویرایش"] = False
-    base["📞 تماس"]  = False
-    base["🗓️ پیگیری"] = False
+    
+    base_for_editor = base.set_index("user_id", drop=False)
 
-    base = base.set_index("user_id", drop=True)
-
-    display_cols = [c for c in base.columns if c != "user_id"]
+    display_cols = [c for c in base_for_editor.columns if c != "user_id"]
     colcfg = {
         "✅ انتخاب": st.column_config.CheckboxColumn("انتخاب", help="برای عملیات گروهی تیک بزن", width="small"),
-        "👁 نمایش":  st.column_config.CheckboxColumn("نمایش", help="نمایش پروفایل", width="small"),
-        "✏ ویرایش": st.column_config.CheckboxColumn("ویرایش", help="ویرایش پروفایل", width="small"),
-        "📞 تماس":   st.column_config.CheckboxColumn("تماس", help="ثبت تماس", width="small"),
-        "🗓️ پیگیری": st.column_config.CheckboxColumn("پیگیری", help="ثبت پیگیری", width="small"),
     }
+    
+    # نمایش داده‌ها و دریافت تغییرات
+    col_sel, col_data, col_actions = st.columns([1, 8, 2])
+    
+    with col_data:
+        # حذف ستون انتخاب از نمایش اصلی
+        cols_to_display = [c for c in display_cols if c != "✅ انتخاب"]
+        st.dataframe(base_for_editor[cols_to_display], use_container_width=True, hide_index=True)
+    
+    with col_sel:
+        st.write("انتخاب")
+        # نمایش ستون انتخاب در یک دیتا ادیتور کوچک برای عملیات گروهی
+        edited_selection = st.data_editor(
+            base_for_editor[["✅ انتخاب"]],
+            use_container_width=True,
+            hide_index=True,
+            column_config=colcfg,
+            key="users_selection_widget"
+        )
+        selected_ids = [int(idx) for idx, row in edited_selection.iterrows() if bool(row.get("✅ انتخاب", False))]
 
-    edited = st.data_editor(
-        base,
-        use_container_width=True,
-        hide_index=True,
-        column_order=display_cols,
-        column_config=colcfg,
-        disabled=[c for c in display_cols if c not in ["✅ انتخاب","👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]],
-        key="users_editor_widget"
-    )
 
-    # ======= نوار عملیات گروهی =======
-    selected_ids = [int(idx) for idx, row in edited.iterrows() if bool(row.get("✅ انتخاب", False))]
-
+    # ======= نوار عملیات گروهی (حذف‌شده از data_editor و قرار داده‌شده در پایین) =======
     st.markdown("#### عملیات گروهی روی کاربران انتخاب‌شده")
 
     cbu1, cbu2, cbu3 = st.columns([2, 2, 2])
@@ -1870,24 +1928,26 @@ def page_users():
 
     st.caption("نکته: ستون «✅ انتخاب» را برای رکوردهایی که می‌خواهی تغییر کنند فعال کن، سپس کارشناس جدید را انتخاب و دکمه اعمال را بزن.")
 
-    # ======= اکشن‌های تکی =======
-    actions = ["👁 نمایش","✏ ویرایش","📞 تماس","🗓️ پیگیری"]
 
-    def snapshot(df_show: pd.DataFrame) -> Dict[int, tuple]:
-        out: Dict[int, tuple] = {}
-        for uid, row in df_show.iterrows():
-            out[int(uid)] = tuple(bool(row.get(a, False)) for a in actions)
-        return out
+    # ======= اکشن‌های تکی (آیکون‌های مجزا در یک ستون) =======
+    with col_actions:
+        st.write("عملیات")
+        for user_id in base_for_editor["user_id"]:
+            uid = int(user_id)
+            c_actions = st.columns(4)
+            with c_actions[0]: 
+                if st.button("👁", key=f"user_view_{uid}", help="نمایش پروفایل", use_container_width=True): 
+                    dlg_profile(uid)
+            with c_actions[1]: 
+                if st.button("✏", key=f"user_edit_{uid}", help="ویرایش پروفایل", use_container_width=True): 
+                    dlg_edit_user(uid)
+            with c_actions[2]:
+                if st.button("📞", key=f"user_call_{uid}", help="ثبت تماس", use_container_width=True): 
+                    dlg_quick_call(uid)
+            with c_actions[3]:
+                if st.button("🗓️", key=f"user_fu_{uid}", help="ثبت پیگیری", use_container_width=True): 
+                    dlg_quick_followup(uid)
 
-    prev = st.session_state.get("users_actions_prev", {})
-    curr = snapshot(edited)
-    for uid, states in curr.items():
-        p = prev.get(uid, (False, False, False, False))
-        if states[0] and not p[0]: dlg_profile(uid)
-        if states[1] and not p[1]: dlg_edit_user(uid)
-        if states[2] and not p[2]: dlg_quick_call(uid)
-        if states[3] and not p[3]: dlg_quick_followup(uid)
-    st.session_state["users_actions_prev"] = curr
 
     # ✅ (2) اگر تماس ثبت شد، فوراً دیالوگ پیگیری همان کاربر را باز کن
     if st.session_state.get("open_fu_after_call_user_id"):
@@ -1916,7 +1976,6 @@ def page_calls():
                     d = jalali_str_to_date(j_date)
                     if not d:
                         st.warning("فرمت تاریخ صحیح نیست.")
-                        return
                     else:
                         create_call(user_map[user_label], datetime.combine(d, t), status, desc, current_user_id())
                         st.toast("تماس ثبت شد.", icon="✅")
@@ -1929,7 +1988,39 @@ def page_calls():
     end_date   = jalali_str_to_date(end_j) if end_j else None
     df = df_calls_by_filters(name_q, st_statuses, start_date, end_date,
                              owner_ids_filter if owner_ids_filter else None, only_owner)
-    st.dataframe(df, use_container_width=True)
+    
+    if df.empty:
+        st.info("تماسی یافت نشد.")
+        return
+
+    # ترتیب ستون‌های درخواستی
+    target_cols_order = [
+        "نام", "نام_خانوادگی", "شرکت", "تلفن", "وضعیت_کاربر", "سطح_کاربر", 
+        "آخرین_تماس_کاربر", "وضعیت_پیگیری_باز", "کارشناس_فروش",
+        "تاریخ_و_زمان", "وضعیت", "توضیحات"
+    ]
+    
+    # ساخت ستون اکشن‌ها (مشاهده و ویرایش کاربر)
+    df["user_id"] = df["user_id_"].copy() # برای استفاده در اکشن
+    base = df[[c for c in target_cols_order if c in df.columns] + ["user_id"]].copy()
+    
+    col_data, col_actions = st.columns([10, 2])
+    
+    with col_data:
+        st.dataframe(base[[c for c in base.columns if c != "user_id"]], use_container_width=True, hide_index=True)
+    
+    with col_actions:
+        st.write("عملیات")
+        for user_id in base["user_id"]:
+            uid = int(user_id)
+            c_actions = st.columns(2)
+            with c_actions[0]: 
+                if st.button("👁", key=f"c_user_view_{uid}", help="نمایش پروفایل کاربر", use_container_width=True): 
+                    dlg_profile(uid)
+            with c_actions[1]: 
+                if st.button("✏", key=f"c_user_edit_{uid}", help="ویرایش پروفایل کاربر", use_container_width=True): 
+                    dlg_edit_user(uid)
+
 
 def page_followups():
     only_owner = None if is_admin() else current_user_id()
@@ -1967,22 +2058,46 @@ def page_followups():
     df = df_followups_by_filters(name_q, st_statuses, start_date, end_date,
                                  owner_ids_filter if owner_ids_filter else None, only_owner)
 
+    if df.empty:
+        st.info("پیگیری یافت نشد.")
+        return
+
+    # ترتیب ستون‌های درخواستی
+    target_cols_order = [
+        "نام", "نام_خانوادگی", "شرکت", "تلفن", "وضعیت_کاربر", "سطح_کاربر", 
+        "آخرین_تماس", "وضعیت_پیگیری_باز", "کارشناس_فروش",
+        "عنوان", "جزئیات", "تاریخ_پیگیری", "وضعیت"
+    ]
+    
     # ✅ (4) امکان تغییر وضعیت پیگیری از داخل جدول
-    # نسخه «قبل از ویرایش» را نگه می‌داریم تا تغییرات را تشخیص دهیم
     original_df = df.copy()
+    base = df[[c for c in target_cols_order if c in df.columns] + ["user_id_"] + ["ID"]].copy()
+
     colcfg = {
         "وضعیت": st.column_config.SelectboxColumn("وضعیت", options=TASK_STATUSES, required=True, help="برای تغییر وضعیت کلیک کنید")
     }
-    edited_df = st.data_editor(
-        df, use_container_width=True, key="followups_editor_widget",
-        column_config=colcfg,
-        hide_index=True
-    )
+
+    col_data, col_actions = st.columns([10, 2])
+    
+    with col_data:
+        # نمایش جدول اصلی (قابلیت ویرایش وضعیت)
+        edited_df = st.data_editor(
+            base[[c for c in base.columns if c not in ["user_id_", "ID"]]], 
+            use_container_width=True, key="followups_editor_widget",
+            column_config=colcfg,
+            hide_index=True
+        )
 
     # اعمال تغییر وضعیت‌ها
     try:
-        if "ID" in edited_df.columns and "وضعیت" in edited_df.columns:
-            merged = edited_df[["ID","وضعیت"]].merge(original_df[["ID","وضعیت"]], on="ID", suffixes=("_new","_old"))
+        # مرج کردن ویرایش شده با اصلی برای یافتن تغییر وضعیت
+        # نیاز به map کردن ID
+        id_col = base["ID"].reset_index(drop=True)
+        edited_df_with_id = edited_df.reset_index(drop=True)
+        edited_df_with_id["ID"] = id_col
+
+        if "ID" in edited_df_with_id.columns and "وضعیت" in edited_df_with_id.columns:
+            merged = edited_df_with_id[["ID","وضعیت"]].merge(original_df[["ID","وضعیت"]], on="ID", suffixes=("_new","_old"))
             changed = merged[merged["وضعیت_new"] != merged["وضعیت_old"]]
             any_change = False
             for _, row in changed.iterrows():
@@ -1994,6 +2109,20 @@ def page_followups():
     except Exception:
         pass
 
+    # ستون اکشن‌ها (مشاهده و ویرایش کاربر)
+    with col_actions:
+        st.write("عملیات")
+        for user_id in base["user_id_"]:
+            uid = int(user_id)
+            c_actions = st.columns(2)
+            with c_actions[0]: 
+                if st.button("👁", key=f"f_user_view_{uid}", help="نمایش پروفایل کاربر", use_container_width=True): 
+                    dlg_profile(uid)
+            with c_actions[1]: 
+                if st.button("✏", key=f"f_user_edit_{uid}", help="ویرایش پروفایل کاربر", use_container_width=True): 
+                    dlg_edit_user(uid)
+
+
 def page_orders():
     """صفحه سفارشات"""
     st.subheader("🛒 مدیریت سفارشات")
@@ -2003,36 +2132,35 @@ def page_orders():
         col1, col2 = st.columns(2)
         
         with col1:
-            order_type = st.radio("نوع سفارش", ["کاربر", "شرکت"])
+            order_type = st.radio("نوع سفارش", ["کاربر", "شرکت"], key="new_order_type")
             
+            user_id, company_id = None, None
             if order_type == "کاربر":
                 users = list_users_basic(None)
                 user_choices = {"— انتخاب کاربر —": None}
                 user_choices.update({f"{user[1]}": user[0] for user in users})
-                selected_user = st.selectbox("انتخاب کاربر", list(user_choices.keys()))
+                selected_user = st.selectbox("انتخاب کاربر", list(user_choices.keys()), key="new_user_select")
                 user_id = user_choices[selected_user]
-                company_id = None
             else:
                 companies = list_companies(None)
                 company_choices = {"— انتخاب شرکت —": None}
                 company_choices.update({f"{company[1]}": company[0] for company in companies})
-                selected_company = st.selectbox("انتخاب شرکت", list(company_choices.keys()))
+                selected_company = st.selectbox("انتخاب شرکت", list(company_choices.keys()), key="new_company_select")
                 company_id = company_choices[selected_company]
-                user_id = None
 
         with col2:
-            order_date = st.date_input("تاریخ سفارش", datetime.today())
-            status = st.selectbox("وضعیت سفارش", ORDER_STATUSES, index=0)
-            total_amount = st.number_input("مبلغ کل سفارش", min_value=0.0, step=1000.0, value=0.0)
+            order_date = st.date_input("تاریخ سفارش", datetime.today(), key="new_order_date")
+            status = st.selectbox("وضعیت سفارش", ORDER_STATUSES, index=0, key="new_status_select")
+            total_amount = st.number_input("مبلغ کل سفارش", min_value=0.0, step=1000.0, value=0.0, key="new_amount_input")
 
         # انتخاب محصول
         products = list_products()
         product_choices = {"— انتخاب محصول —": None}
         product_choices.update({f"{product[1]} ({product[2]})": product[0] for product in products})
-        selected_product = st.selectbox("انتخاب محصول", list(product_choices.keys()))
+        selected_product = st.selectbox("انتخاب محصول", list(product_choices.keys()), key="new_product_select")
         product_id = product_choices[selected_product]
 
-        if st.button("ثبت سفارش", type="primary"):
+        if st.button("ثبت سفارش", type="primary", key="submit_new_order"):
             if (user_id is None and company_id is None) or product_id is None:
                 st.warning("لطفاً کاربر/شرکت و محصول را انتخاب کنید.")
             elif total_amount <= 0:
@@ -2051,22 +2179,22 @@ def page_orders():
         users = list_users_basic(None)
         user_filter_choices = {"همه": None}
         user_filter_choices.update({f"{user[1]}": user[0] for user in users})
-        filter_user = st.selectbox("فیلتر بر اساس کاربر", list(user_filter_choices.keys()))
+        filter_user = st.selectbox("فیلتر بر اساس کاربر", list(user_filter_choices.keys()), key="filter_user")
     
     with col2:
         companies = list_companies(None)
         company_filter_choices = {"همه": None}
         company_filter_choices.update({f"{company[1]}": company[0] for company in companies})
-        filter_company = st.selectbox("فیلتر بر اساس شرکت", list(company_filter_choices.keys()))
+        filter_company = st.selectbox("فیلتر بر اساس شرکت", list(company_filter_choices.keys()), key="filter_company")
     
     with col3:
         products = list_products()
         product_filter_choices = {"همه": None}
         product_filter_choices.update({f"{product[1]} ({product[2]})": product[0] for product in products})
-        filter_product = st.selectbox("فیلتر بر اساس محصول", list(product_filter_choices.keys()))
+        filter_product = st.selectbox("فیلتر بر اساس محصول", list(product_filter_choices.keys()), key="filter_product")
     
     with col4:
-        filter_status = st.selectbox("فیلتر بر اساس وضعیت", ["همه"] + ORDER_STATUSES)
+        filter_status = st.selectbox("فیلتر بر اساس وضعیت", ["همه"] + ORDER_STATUSES, key="filter_status")
 
     # نمایش سفارشات
     df_orders = df_orders_by_filters(
@@ -2077,65 +2205,57 @@ def page_orders():
     )
 
     if not df_orders.empty:
+        # ترتیب ستون‌های درخواستی
+        # نام، نام خانوادگی، شرکت، تلفن، وضعیت، سطح کاربر، آخرین تماس، وضعیت پیگیری باز، کارشناس فروش
+        target_cols_order = [
+            "نام", "نام_خانوادگی", "شرکت", "تلفن", "وضعیت_کاربر", "سطح_کاربر", 
+            "آخرین_تماس", "وضعیت_پیگیری_باز", "کارشناس_فروش",
+            "محصول", "دسته_بندی", "تاریخ_سفارش", "مبلغ_کل", "وضعیت", "تاریخ_ایجاد"
+        ]
+
         # 🔧 3- اضافه کردن ستون ویرایش برای سفارشات
-        base = df_orders.copy()
-        base["✏ ویرایش"] = False
+        base = df_orders[[c for c in target_cols_order if c in df_orders.columns] + ["ID"]].copy()
         
-        display_cols = ["ID", "کاربر", "شرکت", "محصول", "دسته_بندی", "تاریخ_سفارش", "مبلغ_کل", "وضعیت", "تاریخ_ایجاد", "✏ ویرایش"]
-        display_cols = [c for c in display_cols if c in base.columns]
+        display_cols = [c for c in base.columns if c != "ID"]
         
-        colcfg = {
-            "✏ ویرایش": st.column_config.CheckboxColumn("ویرایش", help="ویرایش سفارش", width="small"),
-            "مبلغ_کل": st.column_config.TextColumn("مبلغ کل", help="مبلغ سفارش با جداکننده هزارگان"),
-        }
+        col_data, col_actions = st.columns([10, 2])
         
-        edited = st.data_editor(
-            base,
-            use_container_width=True,
-            hide_index=True,
-            column_order=display_cols,
-            column_config=colcfg,
-            disabled=[c for c in display_cols if c != "✏ ویرایش"],
-            key="orders_editor_widget"
-        )
+        with col_data:
+             # ستون مبلغ_کل بدون جداکننده نمایش داده می‌شود مگر از column_config استفاده کنیم
+            colcfg = {
+                "مبلغ_کل": st.column_config.TextColumn("مبلغ کل", help="مبلغ سفارش با جداکننده هزارگان"),
+            }
+            st.dataframe(base[display_cols], use_container_width=True, hide_index=True, column_config=colcfg)
+            
+        # ستون اکشن‌ها (ویرایش سفارش)
+        with col_actions:
+            st.write("عملیات")
+            for order_id in base["ID"]:
+                oid = int(order_id)
+                if st.button("✏", key=f"order_edit_{oid}", help="ویرایش سفارش", use_container_width=True): 
+                    dlg_edit_order(oid)
+            
         
-        # تشخیص کلیک روی دکمه ویرایش
-        id_series = df_orders["ID"].reset_index(drop=True)
-        
-        def snapshot_orders(df_show: pd.DataFrame) -> Dict[int, bool]:
-            out: Dict[int, bool] = {}
-            for idx in range(len(df_show)):
-                order_id = int(id_series.iloc[idx])
-                out[order_id] = bool(df_show.iloc[idx]["✏ ویرایش"])
-            return out
-
-        prev_orders = st.session_state.get("orders_actions_prev", {})
-        curr_orders = snapshot_orders(edited)
-
-        for order_id, edit_clicked in curr_orders.items():
-            prev_state = prev_orders.get(order_id, False)
-            if edit_clicked and not prev_state:
-                dlg_edit_order(order_id)
-        
-        st.session_state["orders_actions_prev"] = curr_orders
-        
-        # امکان تغییر وضعیت سفارش
+        # --- بخش تغییر وضعیت سریع ---
+        st.divider()
         st.markdown("### تغییر وضعیت سفارش")
         col1, col2 = st.columns(2)
         
         with col1:
             order_ids = df_orders["ID"].tolist()
-            selected_order_id = st.selectbox("انتخاب سفارش برای ویرایش", order_ids)
+            selected_order_id = st.selectbox("انتخاب سفارش برای تغییر وضعیت", order_ids, key="quick_status_select_id")
         
         with col2:
-            current_status = df_orders[df_orders["ID"] == selected_order_id]["وضعیت"].iloc[0]
+            current_status = df_orders[df_orders["ID"] == selected_order_id]["وضعیت"].iloc[0] if selected_order_id else ORDER_STATUSES[0]
             new_status = st.selectbox("وضعیت جدید", ORDER_STATUSES, 
-                                     index=ORDER_STATUSES.index(current_status) if current_status in ORDER_STATUSES else 0)
+                                      index=ORDER_STATUSES.index(current_status) if current_status in ORDER_STATUSES else 0,
+                                      key="quick_status_new_status")
         
-        if st.button("تغییر وضعیت"):
-            update_order_status(selected_order_id, new_status)
-            st.toast(f"وضعیت سفارش {selected_order_id} با موفقیت تغییر یافت.", icon="✅")
-            st.rerun()
+        if st.button("تغییر وضعیت", key="quick_status_button"):
+            if selected_order_id:
+                update_order_status(selected_order_id, new_status)
+                st.toast(f"وضعیت سفارش {selected_order_id} با موفقیت تغییر یافت.", icon="✅")
+                st.rerun()
     else:
         st.info("هیچ سفارشی یافت نشد.")
 
@@ -2148,12 +2268,12 @@ def page_products():
         col1, col2 = st.columns(2)
         
         with col1:
-            category = st.text_input("دسته‌بندی محصول *")
+            category = st.text_input("دسته‌بندی محصول *", key="new_product_cat")
         
         with col2:
-            name = st.text_input("نام محصول *")
+            name = st.text_input("نام محصول *", key="new_product_name")
 
-        if st.button("اضافه کردن محصول", type="primary"):
+        if st.button("اضافه کردن محصول", type="primary", key="add_product_button"):
             if not category.strip() or not name.strip():
                 st.warning("لطفاً تمامی فیلدهای ضروری را پر کنید.")
             else:
@@ -2197,10 +2317,13 @@ def page_access():
     if not is_admin():
         st.info("این بخش فقط برای مدیر در دسترس است.")
         return
+    st.subheader("مدیریت دسترسی کاربران ورود")
+    
     all_users = list_users_basic(None)
     map_users = {"— بدون لینک —": None}
     for u in all_users:
         map_users[f"{u[1]} (ID {u[0]})"] = u[0]
+    
     with st.expander("➕ ایجاد کاربر ورود", expanded=False):
         with st.form("new_app_user", clear_on_submit=True):
             username = st.text_input("نام کاربری *")
@@ -2218,6 +2341,53 @@ def page_access():
                         conn.commit(); conn.close(); st.toast("کاربر ایجاد شد.", icon="✅"); st.rerun()
                     except sqlite3.IntegrityError:
                         st.error("این نام کاربری قبلاً وجود دارد.")
+    
+    st.markdown("### کاربران فعلی سیستم")
+    conn = get_conn()
+    df_app_users = pd.read_sql_query("""
+        SELECT au.id AS ID, au.username AS نام_کاربری, au.role AS نقش,
+               COALESCE(u.full_name, '—') AS لینک_به_کاربر_CRM,
+               au.created_at AS تاریخ_ایجاد
+        FROM app_users au
+        LEFT JOIN users u ON u.id = au.linked_user_id
+        ORDER BY au.role DESC, au.username;
+    """, conn)
+    conn.close()
+    
+    if "تاریخ_ایجاد" in df_app_users.columns:
+        df_app_users["تاریخ_ایجاد"] = df_app_users["تاریخ_ایجاد"].apply(format_gregorian_with_weekday)
+    
+    # امکان تغییر نقش (غیر از ادمین اصلی) و حذف
+    edited_app_users = st.data_editor(
+        df_app_users,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "نقش": st.column_config.SelectboxColumn("نقش", options=["admin", "agent"], required=True),
+        },
+        disabled=["ID", "نام_کاربری", "لینک_به_کاربر_CRM", "تاریخ_ایجاد"],
+        key="app_users_editor"
+    )
+    
+    # اعمال تغییر نقش
+    if not df_app_users.equals(edited_app_users):
+        for idx, row in edited_app_users.iterrows():
+            original_row = df_app_users.iloc[idx]
+            if row["نقش"] != original_row["نقش"]:
+                # نمی‌توان نقش ادمین اصلی را تغییر داد (اولین کاربر)
+                if int(row["ID"]) == 1:
+                    st.warning("نمی‌توان نقش اولین کاربر (admin) را تغییر داد.")
+                    continue
+                try:
+                    conn = get_conn()
+                    conn.execute("UPDATE app_users SET role=? WHERE id=?;", (row["نقش"], int(row["ID"])))
+                    conn.commit()
+                    conn.close()
+                    st.toast(f"نقش کاربر {row['نام_کاربری']} به {role_label(row['نقش'])} تغییر یافت.", icon="🔄")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"خطا در به‌روزرسانی نقش: {e}")
+
 
 # ====================== اجرا ======================
 if not st.session_state.auth:
