@@ -25,7 +25,7 @@ import uuid
 # 👇 اضافه شد
 import os, io, zipfile, shutil
 
-# ====================== صفحه و CSS ======================
+# ====================== صفحه و CSS (تغییرات برای اعمال کامل فونت و RTL بر جداول) ======================
 st.set_page_config(page_title="FardaPack Mini-CRM", page_icon="📇", layout="wide")
 st.markdown(
     """
@@ -38,12 +38,20 @@ st.markdown(
         font-family: "Vazirmatn", sans-serif !important;
       }
       [data-testid="stSidebar"] * { font-family: "Vazirmatn", sans-serif !important; }
-      /* جداول RTL + هدر بولد */
-      [data-testid="stDataFrame"], [data-testid="stDataEditor"]{ direction: rtl !important; }
+      
+      /* جداول RTL + اعمال صریح فونت Vazirmatn بر محتوای جداول */
+      [data-testid="stDataFrame"], [data-testid="stDataEditor"]{ 
+          direction: rtl !important; 
+          font-family: "Vazirmatn", sans-serif !important; /* اعمال مجدد فونت بر سلول‌ها */
+      }
+      
+      /* هدرهای جداول */
       [data-testid="stDataFrame"] div[role="columnheader"],
       [data-testid="stDataEditor"] div[role="columnheader"]{
         text-align: right !important; justify-content: flex-end !important; font-weight: 700 !important;
       }
+      
+      /* سلول‌های محتوای جداول */
       [data-testid="stDataFrame"] div[role="gridcell"],
       [data-testid="stDataEditor"] div[role="gridcell"]{
         text-align: right !important; justify-content: flex-end !important;
@@ -476,7 +484,7 @@ def create_user(first_name, last_name, phone, job_role, company_id, note,
                 status, domain, province, level, owner_id, creator_id) -> Tuple[bool, str]:
     if phone and phone_exists(phone):
         return False, "شماره تماس تکراری است."
-    full_name = f"{(first_name or '').strip()} {(last_name or '').strip()}".strip()
+    full_name = f"{(first_name or "").strip()} {(last_name or "").strip()}".strip()
     if not full_name:
         return False, "نام و نام خانوادگی اجباری است."
     conn = get_conn()
@@ -578,7 +586,7 @@ def sales_filter_widget(disabled: bool, preselected_ids: List[int], key: str = "
 
 # ====================== DataFrames برای صفحات ======================
 def df_companies_advanced(q_name, f_status, f_level, created_from, created_to,
-                         has_open_task, owner_ids_filter: Optional[List[int]], enforce_owner: Optional[int]):
+                          has_open_task, owner_ids_filter: Optional[List[int]], enforce_owner: Optional[int]):
     """تابع جدید برای فیلتر کردن شرکت‌ها"""
     conn = get_conn(); params, where = [], []
     
@@ -590,7 +598,7 @@ def df_companies_advanced(q_name, f_status, f_level, created_from, created_to,
         where.append("c.level IN (" + ",".join(["?"]*len(f_level)) + ")"); params += f_level
     if created_from: 
         where.append("date(c.created_at) >= ?"); params.append(created_from.isoformat())
-    if created_to:   
+    if created_to:    
         where.append("date(c.created_at) <= ?"); params.append(created_to.isoformat())
     
     # فیلتر کارشناس فروش
@@ -658,8 +666,7 @@ def df_users_advanced(first_q, last_q, domain_q, created_from, created_to,
     if statuses: where.append("u.status IN (" + ",".join(["?"]*len(statuses)) + ")"); params += statuses
     if enforce_owner:
         where.append("u.owner_id=?"); params.append(enforce_owner)
-    if owner_ids_filter:
-        where.append("u.owner_id IN (" + ",".join(["?"]*len(owner_ids_filter)) + ")"); params += owner_ids_filter
+    if owner_ids_filter: where.append("u.owner_id IN (" + ",".join(["?"]*len(owner_ids_filter)) + ")"); params += owner_ids_filter
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
@@ -790,7 +797,7 @@ def update_product(product_id: int, category: str, name: str):
     conn.close()
 
 def create_order(user_id: Optional[int], company_id: Optional[int], product_id: int, 
-                order_date: date, status: str, total_amount: float):
+                 order_date: date, status: str, total_amount: float):
     """ایجاد سفارش جدید"""
     conn = get_conn()
     conn.execute("""
@@ -820,7 +827,7 @@ def update_order(order_id: int, **fields):
     conn.commit(); conn.close(); return True, "ذخیره شد."
 
 def df_orders_by_filters(user_filter: Optional[int] = None, company_filter: Optional[int] = None,
-                        product_filter: Optional[int] = None, status_filter: Optional[str] = None):
+                         product_filter: Optional[int] = None, status_filter: Optional[str] = None):
     """فیلتر کردن سفارشات"""
     conn = get_conn()
     params, where = [], ["1=1"]
@@ -1107,16 +1114,16 @@ def dlg_profile(user_id: int):
     with tabs[1]:
         conn = get_conn()
         dfc = pd.read_sql_query("""
-           SELECT cl.id AS ID,
-                  cl.call_datetime AS تاریخ_و_زمان,
-                  cl.status AS وضعیت,
-                  COALESCE(cl.description,'') AS توضیحات,
-                  COALESCE(au.username,'') AS کارشناس_فروش
-           FROM calls cl
-           LEFT JOIN users uu ON uu.id=cl.user_id
-           LEFT JOIN app_users au ON au.id=uu.owner_id
-           WHERE cl.user_id=?
-           ORDER BY cl.call_datetime DESC, cl.id DESC;
+            SELECT cl.id AS ID,
+                   cl.call_datetime AS تاریخ_و_زمان,
+                   cl.status AS وضعیت,
+                   COALESCE(cl.description,'') AS توضیحات,
+                   COALESCE(au.username,'') AS کارشناس_فروش
+            FROM calls cl
+            LEFT JOIN users uu ON uu.id=cl.user_id
+            LEFT JOIN app_users au ON au.id=uu.owner_id
+            WHERE cl.user_id=?
+            ORDER BY cl.call_datetime DESC, cl.id DESC;
         """, conn, params=(user_id,))
         conn.close()
         if "تاریخ_و_زمان" in dfc.columns:
@@ -1126,14 +1133,14 @@ def dlg_profile(user_id: int):
     with tabs[2]:
         conn = get_conn()
         dff = pd.read_sql_query("""
-           SELECT f.id AS ID, f.title AS عنوان, COALESCE(f.details,'') AS جزئیات,
-                  f.due_date AS تاریخ_پیگیری, f.status AS وضعیت,
-                  COALESCE(au.username,'') AS کارشناس_فروش
-           FROM followups f
-           LEFT JOIN users uu ON uu.id=f.user_id
-           LEFT JOIN app_users au ON au.id=uu.owner_id
-           WHERE f.user_id=?
-           ORDER BY f.due_date DESC, f.id DESC;
+            SELECT f.id AS ID, f.title AS عنوان, COALESCE(f.details,'') AS جزئیات,
+                   f.due_date AS تاریخ_پیگیری, f.status AS وضعیت,
+                   COALESCE(au.username,'') AS کارشناس_فروش
+            FROM followups f
+            LEFT JOIN users uu ON uu.id=f.user_id
+            LEFT JOIN app_users au ON au.id=uu.owner_id
+            WHERE f.user_id=?
+            ORDER BY f.due_date DESC, f.id DESC;
         """, conn, params=(user_id,))
         conn.close()
         if "تاریخ_پیگیری" in dff.columns:
@@ -1147,12 +1154,12 @@ def dlg_profile(user_id: int):
             return
         conn = get_conn()
         dcol = pd.read_sql_query("""
-            SELECT uu.id AS ID, uu.full_name AS نام_کامل, COALESCE(uu.phone,'') AS تلفن,
-                   COALESCE(uu.role,'') AS سمت, COALESCE(au.username,'') AS کارشناس_فروش
-            FROM users uu
-            LEFT JOIN app_users au ON au.id=uu.owner_id
-            WHERE uu.company_id=?
-            ORDER BY uu.full_name;
+             SELECT uu.id AS ID, uu.full_name AS نام_کامل, COALESCE(uu.phone,'') AS تلفن,
+                    COALESCE(uu.role,'') AS سمت, COALESCE(au.username,'') AS کارشناس_فروش
+             FROM users uu
+             LEFT JOIN app_users au ON au.id=uu.owner_id
+             WHERE uu.company_id=?
+             ORDER BY uu.full_name;
         """, conn, params=(company_id,))
         conn.close()
         st.dataframe(dcol, use_container_width=True)
@@ -1194,7 +1201,7 @@ def dlg_edit_user(user_id: int):
         with s3:
             owner_label = next((k for k, v in owner_map.items() if v == own), "— بدون کارشناس —")
             owner_label = st.selectbox("کارشناس فروش (شامل مدیر)", list(owner_map.keys()),
-                                       index=list(owner_map.keys()).index(owner_label))
+                                         index=list(owner_map.keys()).index(owner_label))
         dom_v = st.text_input("حوزه فعالیت", value=dom or "")
         prov_v = st.text_input("استان", value=prov or "")
         if st.form_submit_button("ذخیره"):
@@ -1434,13 +1441,13 @@ def dlg_edit_order(order_id: int):
             if order_type == "کاربر":
                 selected_user = next((k for k, v in user_choices.items() if v == user_id), "— انتخاب کاربر —")
                 user_label = st.selectbox("انتخاب کاربر", list(user_choices.keys()), 
-                                        index=list(user_choices.keys()).index(selected_user) if selected_user in user_choices else 0)
+                                         index=list(user_choices.keys()).index(selected_user) if selected_user in user_choices else 0)
                 user_id_val = user_choices[user_label]
                 company_id_val = None
             else:
                 selected_company = next((k for k, v in company_choices.items() if v == company_id), "— انتخاب شرکت —")
                 company_label = st.selectbox("انتخاب شرکت", list(company_choices.keys()),
-                                           index=list(company_choices.keys()).index(selected_company) if selected_company in company_choices else 0)
+                                            index=list(company_choices.keys()).index(selected_company) if selected_company in company_choices else 0)
                 company_id_val = company_choices[company_label]
                 user_id_val = None
 
@@ -1453,13 +1460,13 @@ def dlg_edit_order(order_id: int):
                 
             order_date_v = st.date_input("تاریخ سفارش", order_date_val)
             status_v = st.selectbox("وضعیت سفارش", ORDER_STATUSES, 
-                                  index=ORDER_STATUSES.index(status) if status in ORDER_STATUSES else 0)
+                                     index=ORDER_STATUSES.index(status) if status in ORDER_STATUSES else 0)
             total_amount_v = st.number_input("مبلغ کل سفارش", min_value=0.0, step=1000.0, value=float(total_amount))
 
         # انتخاب محصول
         selected_product = next((k for k, v in product_choices.items() if v == product_id), "— انتخاب محصول —")
         product_label = st.selectbox("انتخاب محصول", list(product_choices.keys()),
-                                   index=list(product_choices.keys()).index(selected_product) if selected_product in product_choices else 0)
+                                     index=list(product_choices.keys()).index(selected_product) if selected_product in product_choices else 0)
         product_id_val = product_choices[product_label]
 
         if st.form_submit_button("ذخیره تغییرات"):
@@ -1553,7 +1560,7 @@ def page_companies():
     has_open = None if has_open_opt == "— مهم نیست —" else (True if has_open_opt == "بله" else False)
 
     dfc = df_companies_advanced(q_name, f_status, f_level, created_from, created_to, has_open,
-                                owner_ids_filter if owner_ids_filter else None, only_owner)
+                                 owner_ids_filter if owner_ids_filter else None, only_owner)
 
     # --- جدول با ستون‌های اقدام ---
     if not dfc.empty:
@@ -1714,7 +1721,7 @@ def page_users():
                             note_v     = getv("Note")
 
                             status_v = status_v if status_v in USER_STATUSES else "بدون وضعیت"
-                            level_v  = level_v  if level_v  in LEVELS        else "هیچکدام"
+                            level_v  = level_v  if level_v  in LEVELS      else "هیچکدام"
 
                             company_id = get_or_create_company(company_n, current_user_id()) if company_n else None
                             owner_id   = get_app_user_id_by_username(owner_u) if owner_u else None
@@ -1890,6 +1897,7 @@ def page_calls():
                     d = jalali_str_to_date(j_date)
                     if not d:
                         st.warning("فرمت تاریخ صحیح نیست.")
+                        return
                     else:
                         create_call(user_map[user_label], datetime.combine(d, t), status, desc, current_user_id())
                         st.toast("تماس ثبت شد.", icon="✅")
@@ -2103,7 +2111,7 @@ def page_orders():
         with col2:
             current_status = df_orders[df_orders["ID"] == selected_order_id]["وضعیت"].iloc[0]
             new_status = st.selectbox("وضعیت جدید", ORDER_STATUSES, 
-                                    index=ORDER_STATUSES.index(current_status) if current_status in ORDER_STATUSES else 0)
+                                     index=ORDER_STATUSES.index(current_status) if current_status in ORDER_STATUSES else 0)
         
         if st.button("تغییر وضعیت"):
             update_order_status(selected_order_id, new_status)
